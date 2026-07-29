@@ -1,0 +1,134 @@
+{
+  "audit1_preprocessing": {
+    "QIN": 15,
+    "train": {
+      "images": 60000,
+      "cells": 3840000,
+      "cells_differing": 670,
+      "frac_differing": 0.00017447916666666667,
+      "exact_half_ties": 5793,
+      "tie_rate": 0.00150859375,
+      "all_diffs_are_ties": true,
+      "max_abs_delta": 1,
+      "non_tie_disagreements": 0
+    },
+    "test": {
+      "images": 10000,
+      "cells": 640000,
+      "cells_differing": 128,
+      "frac_differing": 0.0002,
+      "exact_half_ties": 936,
+      "tie_rate": 0.0014625,
+      "all_diffs_are_ties": true,
+      "max_abs_delta": 1,
+      "non_tie_disagreements": 0
+    },
+    "bins": [
+      [
+        0,
+        4
+      ],
+      [
+        3,
+        7
+      ],
+      [
+        7,
+        11
+      ],
+      [
+        10,
+        14
+      ],
+      [
+        14,
+        18
+      ],
+      [
+        17,
+        21
+      ],
+      [
+        21,
+        25
+      ],
+      [
+        24,
+        28
+      ]
+    ],
+    "npix_per_bin": 16,
+    "tie_condition": "sum*15 == k*4080 + 2040  (npix=16, 255 scale)",
+    "pass": true,
+    "note": "Disagreements are exact-.5-tie resolutions only (float eval order), never binning/scaling errors. Tie rate is ~16x higher at 8-bit."
+  },
+  "audit2_integer_eval": {
+    "W1_ternary": true,
+    "W2_ternary": true,
+    "W1_values": [
+      -1,
+      0,
+      1
+    ],
+    "W2_values": [
+      -1,
+      0,
+      1
+    ],
+    "W1_nonzero_frac": 0.61669921875,
+    "W2_nonzero_frac": 0.671875,
+    "bias_is_integer": true,
+    "b2_is_integer": true,
+    "bias_absmax": 29,
+    "b2_absmax": 3,
+    "k_is_integer": true,
+    "k_min": 0,
+    "k_max": 2,
+    "k_within_declared": true,
+    "k_dist": {
+      "0": 2,
+      "1": 28,
+      "2": 2
+    },
+    "qmax_values": [
+      15
+    ],
+    "a1_observed": [
+      -130,
+      95
+    ],
+    "preshift_observed": [
+      -119,
+      85
+    ],
+    "a2_observed": [
+      -92,
+      84
+    ],
+    "a1_worst_case": [
+      -690,
+      690
+    ],
+    "a1_bits_worst_case": 11,
+    "preshift_bits_worst_case": 11,
+    "a2_worst_case": [
+      -408,
+      408
+    ],
+    "a2_bits_worst_case": 10,
+    "no_int64_overflow": true,
+    "observed_within_worst_case": true,
+    "pass": true
+  },
+  "audit5_tiebreak": {
+    "n_images": 10000,
+    "n_tied": 45,
+    "tie_rate": 0.0045,
+    "max_tie_multiplicity": 3,
+    "acc_lowest_index": 0.9256,
+    "acc_highest_index": 0.9258,
+    "acc_generous": 0.9275,
+    "spread_pp": 0.19000000000000128,
+    "convention": "lowest class index (numpy argmax)"
+  }
+}
