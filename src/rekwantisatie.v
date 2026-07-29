@@ -1,12 +1,12 @@
-module shift_kwantisatie(input signed [10:0] accumulator,
+module shift_kwantisatie(input signed [8:0] accumulator,
                          input signed [5:0] bias,
                          input wire [1:0] k,
                          output wire [3:0] h);
     
-    wire signed[11:0] som;
-    reg signed [11:0] shifted;
+    wire signed[8:0] som;
+    reg signed [8:0] shifted;
 
-    assign som = accumulator + bias;
+    assign som = accumulator + {{3{1'b0}},bias};
 
     always@(*) begin
         case(k)
@@ -17,6 +17,6 @@ module shift_kwantisatie(input signed [10:0] accumulator,
         endcase
     end
 
-    assign h = shifted[11] ? 4'd0 : (|shifted[11:4]) ? 4'd15 : shifted[3:0];
+    assign h = shifted[8] ? 4'd0 : (|shifted[8:4]) ? 4'd15 : shifted[3:0];
 
 endmodule
