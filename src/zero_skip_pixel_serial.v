@@ -27,23 +27,23 @@ module zero_skip_pixel_serial(input wire clk,
         s_pix[0] = 0; s_pix[1] = 0; s_pix[2] = 0; s_pix[3] = 0;
         s_pos[0] = 0; s_pos[1] = 0; s_pos[2] = 0; s_pos[3] = 0;
 
-        if(nz0) begin s_pix[s_count] = p0;
-                      s_pos[s_count] = 2'd0;
+        if(nz0) begin s_pix[s_count[1:0]] = p0;
+                      s_pos[s_count[1:0]] = 2'd0;
                       s_count = s_count + 1;
         end
         
-        if(nz1) begin s_pix[s_count] = p1;
-                      s_pos[s_count] = 2'd1;
+        if(nz1) begin s_pix[s_count[1:0]] = p1;
+                      s_pos[s_count[1:0]] = 2'd1;
                       s_count = s_count + 1;
         end
 
-        if(nz0) begin s_pix[s_count] = p2;
-                      s_pos[s_count] = 2'd2;
+        if(nz2) begin s_pix[s_count[1:0]] = p2;
+                      s_pos[s_count[1:0]] = 2'd2;
                       s_count = s_count + 1;
         end
 
-        if(nz0) begin s_pix[s_count] = p3;
-                      s_pos[s_count] = 2'd3;
+        if(nz3) begin s_pix[s_count[1:0]] = p3;
+                      s_pos[s_count[1:0]] = 2'd3;
                       s_count = s_count + 1;
         end
     end
@@ -88,8 +88,8 @@ module zero_skip_pixel_serial(input wire clk,
             end
         end
     end
-assign pixel = pix_r[active][read_pointer];
-assign index = {base_r[active], pos_r[active][read_pointer]};
+assign pixel = pix_r[active][read_pointer[1:0]];
+assign index = {base_r[active], pos_r[active][read_pointer[1:0]]};
 assign valid = occupied[active] && (read_pointer < count_r[active]);
 assign buffer_free = !occupied[other];
 endmodule
