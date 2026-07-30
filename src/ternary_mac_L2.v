@@ -3,6 +3,7 @@ module ternary_mac_L2(input wire clk,
                       input wire en,
                       input wire clear,
                       input wire [3:0] neuron,
+                      input wire signed [6:0] bias,
                       input wire signed [1:0] weight,
                       output reg signed [9:0] accumulator);
     
@@ -19,9 +20,9 @@ module ternary_mac_L2(input wire clk,
 
     always@(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            accumulator <= 0;
+            accumulator <= bias;
         else if (clear)
-            accumulator <= 0;
+            accumulator <= bias;
         else if (en)
             accumulator <= acc_next;
     end
