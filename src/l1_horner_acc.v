@@ -90,6 +90,43 @@
 // module's clk, not 384 enables inside it.
 //
 // A pure clear with no accumulate is still available: img_start = 1 with act = 0.
+//
+// ---------------------------------------------------------------- acc_next, and why
+// `acc_next` is the D input of the accumulator bank -- the SAME nets that already feed
+// the flops, re-tapped as an output. It adds no cell: yosys sees one adder per lane
+// whether or not the sum is also a primary output (measured; see l2_synthesis/results.md
+// for l1_horner_acc before and after this port).
+//
+// It exists because of a one-cycle skew that the Fase-1 netlist diagram in
+// docs/cc_rtl_completion_roadmap.md hides. `plane_end` is asserted DURING a plane's
+// last accumulate cycle (active_pixel_scan.v's cycle contract), and checkpoint_ctrl
+// derives `capture` combinationally from it, so the shadow bank latches at the posedge
+// that ENDS that cycle. At that posedge `acc_live` -- the flop OUTPUT -- is still the
+// value after len-1 pixels: the plane's last pixel is being clocked in by the very same
+// edge. Wiring `acc_live` into l1_acc_shadow(_cg).acc_live, exactly as the diagram
+// draws it, therefore snapshots an ACC one pixel short of the plane boundary. It
+// compiles, it is never X, and every downstream margin is quietly wrong -- the failure
+// mode docs/cc_verilog_build_prompts.md §0.1 exists to enumerate.
+//
+// Delaying `capture` by a cycle is NOT the fix: the shadow's first read is at S+1
+// (checkpoint_ctrl.v's cycle map), and moving the whole check one cycle later breaks
+// dec == end_of_plane(k) + `GAMMA, i.e. cycle-exactness against engine.py's
+// boundary_cycles(overlap=True). Capturing the flops' D side keeps the schedule and
+// takes the boundary value: snap gets precisely what q gets at that edge.
+//
+// WHY THIS WOULD HAVE SHIPPED. The skew is only visible when the plane's LAST scanned
+// cycle carries an active pixel, and the two orderings differ completely on that:
+//   dense      the last cycle is always pixel 63, the bottom-right corner of the 8x8
+//              input. Over the whole 10k test set that pixel is nonzero in ONE image,
+//              in ONE plane (40,000 planes, 1 hit). Dense is mode 1's ordering, so the
+//              fixed-precision control arm of the flagship A/B hides the bug entirely.
+//   zero-skip  the last cycle is a real pixel whenever popcount >= `ZS_FILL, which is
+//              27,791 of the same 40,000 planes (69.5%). Every one of those snapshots
+//              is short by one weight column.
+// So the wrong wire is quiet in exactly the arm that would be trusted and loud in
+// exactly the arm the headline number comes from. ckpt_tb/tb_ckpt_block.v's
+// "BOUNDARY SKEW" assertion is the probe; the mutation acc_next -> acc_live SURVIVES
+// its dense phase and dies on image 0 of its zero-skip phase.
 `include "ckpt_defs.vh"
 
 module l1_horner_acc #(parameter W = `ACC_W) (
@@ -98,7 +135,8 @@ module l1_horner_acc #(parameter W = `ACC_W) (
     input  wire                 plane_start,  // first pixel cycle of a plane: base <- 2*ACC
     input  wire                 act,          // this cycle's input bit, x_i >> (`PLANES-1-p)
     input  wire [2*`NHID-1:0]   w_col,        // one W1 ROM row: unit j = {p,n} at [2j+1:2j]
-    output wire [`NHID*W-1:0]   acc_live      // 32 x W signed, unit 31 (MSB) .. unit 0 (LSB)
+    output wire [`NHID*W-1:0]   acc_live,     // 32 x W signed, unit 31 (MSB) .. unit 0 (LSB)
+    output wire [`NHID*W-1:0]   acc_next      // the same bank's D side; see the header
 );
     genvar j;
     generate
@@ -120,10 +158,13 @@ module l1_horner_acc #(parameter W = `ACC_W) (
                                       : dec ? {W{1'b1}}                  // -1
                                             : {W{1'b0}};                 //  0
 
+            wire signed [W-1:0] nxt = base + delta;
+
             always @(posedge clk)
-                q <= base + delta;
+                q <= nxt;
 
             assign acc_live[j*W +: W] = q;
+            assign acc_next[j*W +: W] = nxt;
         end
     endgenerate
 endmodule

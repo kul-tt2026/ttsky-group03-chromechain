@@ -47,6 +47,12 @@
 `include "ckpt_defs.vh"
 
 `ifdef SYNTHESIS
+// GUARDED because ckpt_rtl/ckpt_block.v declares the identical stub for its own
+// out-ACC clock gate, and run_synth.py reads both files in one yosys invocation.
+// Whichever is read first wins; a second, unguarded declaration is a re-definition
+// error, not a silent override.
+`ifndef SKY130_FD_SC_HD__DLCLKP_1_DECLARED
+`define SKY130_FD_SC_HD__DLCLKP_1_DECLARED
 (* blackbox *)
 (* keep *)
 module sky130_fd_sc_hd__dlclkp_1 (
@@ -55,6 +61,7 @@ module sky130_fd_sc_hd__dlclkp_1 (
     output GCLK
 );
 endmodule
+`endif
 `endif
 
 module l1_acc_shadow_cg #(parameter W = `ACC_W) (
