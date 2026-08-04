@@ -1,4 +1,4 @@
-module gewicht_rom_L1_wide(
+module gewicht_rom_L1(
     input  wire [5:0] pixel_index,       // 0..63, which pixel
     output reg  [63:0] w1_all            // 32 lanes x 2b signed weight, lane n at [2n+1:2n]
 );

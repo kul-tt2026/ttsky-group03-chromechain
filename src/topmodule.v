@@ -1,12 +1,11 @@
-module nn_top(
-    input  wire        clk,
-    input  wire        rst_n,
-    input  wire        start,
-    input  wire [15:0] window_in,
-    input  wire        window_valid,   
-    output wire         window_req,    
-    output wire [3:0]  result,
-    output wire         result_valid
+module nn_top(input  wire clk,
+              input  wire rst_n,
+              input  wire start,
+              input  wire [15:0] window_in,
+              input  wire window_valid,   
+              output wire window_req,    
+              output wire [3:0] result,
+              output wire result_valid
 );
 
 
@@ -61,11 +60,8 @@ module nn_top(
 
     wire signed [8:0] l1_acc    [0:31];
 
-    // ONE shared decoder for all 32 lanes (was: 32 separate gewicht_rom_L1
-    // instances, each re-decoding the same pixel_index). w1_all[2n+1:2n] is
-    // lane n's weight -- identical values, one lookup instead of 32.
     wire [63:0] w1_all;
-    gewicht_rom_L1_wide u_wrom1(
+    gewicht_rom_L1 u_rom1(
         .pixel_index(zs_index),
         .w1_all(w1_all)
     );
