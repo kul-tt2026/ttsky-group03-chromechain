@@ -89,7 +89,7 @@ module nn_top(
     );
 
     wire [3:0] h_value;
-    shift_kwantisatie u_shiftq(
+    rekwantisatie u_shiftq(
         .accumulator(l1_acc[neuron_idx]),
         .bias(q_bias), .k(q_k),
         .h(h_value)
@@ -108,7 +108,7 @@ module nn_top(
     genvar c;
     generate
         for (c = 0; c < 10; c = c + 1) begin : L2_LANES
-            gewicht_rom_L2 u_wrom2(
+            l2_weight_rom u_wrom2(
                 .class_index(c[3:0]),
                 .neuron_index(neuron_idx),
                 .weight(w2[c])
