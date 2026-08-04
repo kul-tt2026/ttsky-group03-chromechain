@@ -59,23 +59,25 @@ module nn_top(
         .buffer_free(zs_buffer_free)
     );
 
-    wire signed [1:0] w1        [0:31];
     wire signed [8:0] l1_acc    [0:31];
+
+    // ONE shared decoder for all 32 lanes (was: 32 separate gewicht_rom_L1
+    // instances, each re-decoding the same pixel_index). w1_all[2n+1:2n] is
+    // lane n's weight -- identical values, one lookup instead of 32.
+    wire [63:0] w1_all;
+    gewicht_rom_L1_wide u_wrom1(
+        .pixel_index(zs_index),
+        .w1_all(w1_all)
+    );
 
     genvar n;
     generate
         for (n = 0; n < 32; n = n + 1) begin : L1_LANES
-            gewicht_rom_L1 u_wrom1(
-                .neuron_index(n[4:0]),
-                .pixel_index(zs_index),
-                .weight(w1[n])
-            );
-
             ternary_mac_L1 u_mac1(
                 .clk(clk), .rst_n(rst_n),
                 .en(l1_en), .clear(l1_clear),
                 .pixel(zs_pixel),
-                .weight(w1[n]),
+                .weight(w1_all[2*n +: 2]),
                 .accumulator(l1_acc[n])
             );
         end
@@ -101,19 +103,22 @@ module nn_top(
             hidden_mem[neuron_idx] <= h_value;
     end
 
-    wire signed [1:0] w2     [0:9];
     wire signed [6:0] l2_bias[0:9];
     wire signed [9:0] l2_acc [0:9];
+
+    // ONE shared decoder for all 10 class lanes (was: 10 separate
+    // gewicht_rom_L2 instances, each re-decoding the same neuron_index).
+    // w2_all[2c+1:2c] is class c's weight -- identical values, one lookup
+    // instead of 10. bias_rom_L2 is untouched -- still needs its own content.
+    wire [19:0] w2_all;
+    gewicht_rom_L2_wide u_wrom2(
+        .neuron_index(neuron_idx),
+        .w2_all(w2_all)
+    );
 
     genvar c;
     generate
         for (c = 0; c < 10; c = c + 1) begin : L2_LANES
-            gewicht_rom_L2 u_wrom2(
-                .class_index(c[3:0]),
-                .neuron_index(neuron_idx),
-                .weight(w2[c])
-            );
-
             bias_rom_L2 u_brom2(
                 .class_index(c[3:0]),
                 .bias(l2_bias[c])
@@ -123,7 +128,7 @@ module nn_top(
                 .clk(clk), .rst_n(rst_n),
                 .en(l2_en), .clear(l2_clear),
                 .neuron(h_value),
-                .bias(l2_bias[c]), .weight(w2[c]),
+                .bias(l2_bias[c]), .weight(w2_all[2*c +: 2]),
                 .accumulator(l2_acc[c])
             );
         end
