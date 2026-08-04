@@ -11,9 +11,12 @@
 // carries the only wide datapath and `uo_out` is muxed.
 //
 //   ui_in[7:0]   THE DATA BUS. Pixel beats (`LD_W = 8, one plane = 8 beats) and config
-//                words (`CFG_W = 8, one blob = 16 words) share it. They are never live
-//                at once: config loads while `cfg_mode` is high and no image is running,
-//                which is exactly what tb_cc_top's K12 phase proves is enforced.
+//                words (`CFG_W = 8, one blob = `CFG_WORDS words -- 6 since v1.1, 16 in
+//                v1) share it. They are never live at once: config loads while
+//                `cfg_mode` is high and no image is running, which is exactly what
+//                tb_cc_top's K12 phase proves is enforced. THE WORD COUNT IS THE ONE
+//                HOST-VISIBLE DIFFERENCE between v1 and v1.1; ckpt_defs.vh's "WHICH
+//                BUILD IS THIS" is the authority.
 //
 //   uio[7:0]     CONTROL IN. uio_oe is tied 0 -- every bidirectional is an input, so the
 //                chip never drives them and there is no direction hazard to get wrong.

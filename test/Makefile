@@ -19,6 +19,7 @@ PROJECT_SOURCES  = tt_um_kul_chromechain.v \
                    popcount.v \
                    active_pixel_scan.v \
                    l1_horner_acc.v \
+                   l1_horner_cnt.v \
                    l1_acc_shadow.v \
                    l1_acc_shadow_cg.v \
                    checkpoint_ctrl.v \

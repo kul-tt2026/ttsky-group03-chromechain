@@ -124,19 +124,29 @@ endmodule
 `endif
 
 module ckpt_block #(
+    parameter ACC_CNT = `ACC_CNT_DEFAULT,   // 1 = carry-chain accumulator (l1_horner_cnt)
     // L1 accumulator width. `ACC_W = 12; W = 11 is the DESIGN_LEDGER Aug-1 floor, priced
     // through run_synth.py's PARAM_OVERRIDES exactly as l1_horner_acc/l1_acc_shadow are.
     parameter W             = `ACC_W,
     // 1 = l1_acc_shadow_cg (one integrated clock gate), 0 = l1_acc_shadow (384 enables).
     parameter SHADOW_CG     = 1,
     // out-ACC storage: 0 = 120 load-enable flops (edfxtp_1), 1 = 120 plain flops behind
-    // one dlclkp_1. Default 0 -- it is the coding ckpt_tb/tb_checkpoint_ctrl.v has been
-    // verifying since Jul 30, so the block starts behaviourally identical to the model
-    // already inside verify.py's gate. Both are measured; see l2_synthesis/results.md.
-    parameter OACC_CG       = 0,
+    // one dlclkp_1. v1 was 0 -- the coding ckpt_tb/tb_checkpoint_ctrl.v had been verifying
+    // since Jul 30. v1.1 takes the gate; both codings stay in verify.py's gate and both
+    // are measured, see l2_synthesis/results.md.
+    parameter OACC_CG       = `OACC_CG_DEFAULT,
     // passed straight to active_pixel_scan: 0 = config bit, 1 = fused zero-skip,
     // 2 = fused dense.
     parameter EN_SKIP_FUSED = 0,
+    // config_latch geometry, PASSED THROUGH so a build can reach it from a testbench.
+    // Defaults follow ckpt_defs.vh: 6 words / 48 b since v1.1, 16 / 128 b in v1.
+    // run_synth.py used to reach this with `chparam -set NWORDS 6 config_latch`, which
+    // works for a synthesis probe and is unreachable from iverilog -- and an area number
+    // for a configuration nobody simulated is worthless (tb_cc_top.v's own words). The
+    // loader that fills this latch is parameterised in lockstep one level up; see
+    // blob_loader.v's "NWORDS IS A CONTRACT".
+    parameter CFG_NWORDS = `CFG_WORDS,
+    parameter CFG_ADDRW  = `CFG_ADDR_W,
     // SYNTHESIS PROBE, NEVER A SHIPPING BUILD. 1 ties `ckpt_en` to 0 at elaboration, so
     // yosys deletes everything that exists only to serve mode 3 -- the arming decode, the
     // threshold mux, the pending-check slot, exit_tree_2stage's rT compare. The delta
@@ -171,7 +181,7 @@ module ckpt_block #(
 
     // ---- config-latch host port (the only reloadable state on the chip)
     input  wire                          cfg_wr_en,
-    input  wire [`CFG_ADDR_W-1:0]        cfg_addr,
+    input  wire [CFG_ADDRW-1:0]          cfg_addr,
     input  wire [`CFG_W-1:0]             cfg_wr_data,
     input  wire                          cfg_blob_done,
     output wire [`CFG_W-1:0]             cfg_rd_data,
@@ -217,7 +227,7 @@ module ckpt_block #(
     wire                en_skip, en_vstrobe;
     wire [`PLANES-1:0]  inv_plane;
 
-    config_latch cfg (
+    config_latch #(.NWORDS(CFG_NWORDS), .ADDR_W(CFG_ADDRW)) cfg (
         .clk(clk), .rst(rst),
         .wr_en(cfg_wr_en), .addr(cfg_addr), .wr_data(cfg_wr_data),
         .blob_done(cfg_blob_done), .rd_data(cfg_rd_data),
@@ -261,11 +271,28 @@ module ckpt_block #(
     // ------------------------------------------------------------------ L1
     wire [(`NHID*W)-1:0] acc_live, acc_next;
 
-    l1_horner_acc #(.W(W)) l1 (
-        .clk(clk), .img_start(img_start), .plane_start(plane_start),
-        .act(pix_act), .w_col(w1_row),
-        .acc_live(acc_live), .acc_next(acc_next)
-    );
+    // ACC_CNT picks the accumulator FORM, not its behaviour: l1_horner_cnt is proven
+    // equivalent to l1_horner_acc over 200,000 random cycles and differs only in writing
+    // the +-1 update as a carry chain instead of an adder (-0.149 t standalone). Default
+    // 0 keeps the shipping build bit-identical; the parameter exists so the saving can be
+    // measured AT CHIP LEVEL, because l1_horner_cnt is 1.3 ns slower standalone and the
+    // accumulator sits at the tail of the chip's critical path -- so the area win might
+    // cost fmax, and that has to be measured rather than assumed.
+    generate
+    if (ACC_CNT) begin : g_cnt
+        l1_horner_cnt #(.W(W)) l1 (
+            .clk(clk), .img_start(img_start), .plane_start(plane_start),
+            .act(pix_act), .w_col(w1_row),
+            .acc_live(acc_live), .acc_next(acc_next)
+        );
+    end else begin : g_add
+        l1_horner_acc #(.W(W)) l1 (
+            .clk(clk), .img_start(img_start), .plane_start(plane_start),
+            .act(pix_act), .w_col(w1_row),
+            .acc_live(acc_live), .acc_next(acc_next)
+        );
+    end
+    endgenerate
 
     // ------------------------------------------------------------------ controller
     wire                         capture, sgn, oacc_sel_init, oacc_en;

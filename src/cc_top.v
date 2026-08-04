@@ -31,11 +31,29 @@
 // change this file needs for it.
 `include "ckpt_defs.vh"
 
+// ---------------------------------------------------------------- THE v1.1 LEVERS
+// Four area levers, all of them parameters and all of them defaulting to v1. W and
+// OACC_CG were already here; ACC_CNT and the config-latch geometry are added so a
+// TESTBENCH can reach them, not only `chparam`. run_synth.py could always poke a nested
+// parameter (`chparam -set NWORDS 6 config_latch`), but iverilog cannot -- so lever 3 and
+// lever 4 were priced on configurations no simulation had ever run. tb_cc_top.v says it
+// itself: "an area number for a configuration nobody simulated is worthless".
+//
+// CFG_NWORDS/CFG_ADDRW drive config_latch AND blob_loader from one pair. They are not two
+// independent knobs: the loader owns the word counter and the address, so a 48 b latch
+// behind a 16-word loader wraps words 8..15 onto 0..5 and zeroes the thresholds without
+// raising blob_err. See blob_loader.v's "NWORDS IS A CONTRACT".
+// Every default comes from ckpt_defs.vh, so "which build is this" is one question with one
+// answer in one file. v1 is this module with W=12, OACC_CG=0, ACC_CNT=0, CFG_NWORDS=16,
+// CFG_ADDRW=4 -- see ckpt_defs.vh's "WHICH BUILD IS THIS".
 module cc_top #(
     parameter W             = `ACC_W,
     parameter SHADOW_CG     = 1,
-    parameter OACC_CG       = 0,
-    parameter EN_SKIP_FUSED = 0
+    parameter OACC_CG       = `OACC_CG_DEFAULT,
+    parameter EN_SKIP_FUSED = 0,
+    parameter ACC_CNT       = `ACC_CNT_DEFAULT,   // 1 = l1_horner_cnt (carry chain)
+    parameter CFG_NWORDS    = `CFG_WORDS,         // latch geometry AND the blob contract;
+    parameter CFG_ADDRW     = `CFG_ADDR_W         //   they are one knob, never two
 ) (
     input  wire                   clk,
     input  wire                   rst,          // synchronous, active high
@@ -78,7 +96,7 @@ module cc_top #(
     wire [(2*`NHID)-1:0]   w1_row;
 
     wire                   cfg_wr_en, cfg_blob_done;
-    wire [`CFG_ADDR_W-1:0] cfg_addr;
+    wire [CFG_ADDRW-1:0]   cfg_addr;
     wire [`CFG_W-1:0]      cfg_wr_data;
 
     wire                   page_sel;
@@ -108,7 +126,7 @@ module cc_top #(
     //   assign w1_row = page_sel ? row_p2 : row_p1;
 
     // ---- config blob
-    blob_loader u_blob (
+    blob_loader #(.NWORDS(CFG_NWORDS), .ADDR_W(CFG_ADDRW)) u_blob (
         .clk(clk), .rst(rst),
         .cfg_mode(cfg_mode), .cfg_stb(cfg_stb), .cfg_din(cfg_din),
         .cfg_wr_en(cfg_wr_en), .cfg_addr(cfg_addr), .cfg_wr_data(cfg_wr_data),
@@ -129,7 +147,8 @@ module cc_top #(
     // ---- the datapath
     ckpt_block #(
         .W(W), .SHADOW_CG(SHADOW_CG), .OACC_CG(OACC_CG),
-        .EN_SKIP_FUSED(EN_SKIP_FUSED), .MODE1_ONLY(0)
+        .EN_SKIP_FUSED(EN_SKIP_FUSED), .MODE1_ONLY(0), .ACC_CNT(ACC_CNT),
+        .CFG_NWORDS(CFG_NWORDS), .CFG_ADDRW(CFG_ADDRW)
     ) u_blk (
         .clk(clk), .rst(rst),
         .img_start(img_start), .swap(swap), .scan_start(scan_start),

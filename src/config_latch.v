@@ -4,7 +4,9 @@
 // puts W1, W2, theta and k in synthesized ROM. ROM contents cannot change after
 // tape-out, so everything a new blob is allowed to move lives in this module: the
 // three conformal thresholds plus a handful of config bits. That is what makes the
-// "reload = 128 b instead of 5,286 b" claim (~66 us, not 543 us) true.
+// "reload is a blob, not a network" claim true: 5,286 b would be ~543 us; v1's 128 b
+// window is ~66 us, and v1.1's 48 b is ~25 us. Quote the one that matches the build --
+// `CFG_WORDS says which.
 //
 // FIELD LIST -- DESIGN_LEDGER Aug-1 item 5, offsets frozen in ckpt_defs.vh:
 //
@@ -15,12 +17,13 @@
 //   [ 38: 35]  inv_plane    K10       per-plane input inversion
 //   [ 41: 39]  n_cap                  plane cap
 //   [ 42: 42]  en_vstrobe   K11       per-plane valid-strobe enable
-//   [127: 43]  spare                  page-2 (thermal) fields, not frozen until ~Aug 5
+//   [ 47: 43]  spare                  5 b in v1.1; [127:43] = 85 b in v1's window
 //
-// 43 b of payload in a 128 b window. The spare bits are NOT free -- they are writable
-// and readable, so they cost real flops -- but they are the blob contract, and page-2
-// content is still open. config_latch_min (NWORDS=6) prices the payload alone; see
-// l2_synthesis/results.md.
+// 43 b of payload. v1 held it in a 128 b window whose spare was reserved for page-2
+// (thermal) fields; v1.1 lever 3 cut the window to 48 b and SPENT that reserve -- the
+// spare bits were never free, they are writable and readable and cost real flops
+// (-0.292 t@70% at chip level). If page 2 lives, this is the first thing to give back.
+// `config_latch_v1` prices the 128 b window; see l2_synthesis/results.md.
 //
 // T PACKING IS NOT ARBITRARY. checkpoint_ctrl.v:238-240 slices its t_cfg port as
 // t_cfg[(k-1)*`T_W +: `T_W] for checkpoint k, i.e. {T3,T2,T1}. The offsets above match
@@ -58,9 +61,9 @@
 `include "ckpt_defs.vh"
 
 module config_latch #(
-    parameter NWORDS = `CFG_WORDS,      // 16 -> the 128 b blob contract
-    parameter ADDR_W = `CFG_ADDR_W      // 4; set to 3 alongside NWORDS=6 for the
-) (                                     //    payload-only area variant
+    parameter NWORDS = `CFG_WORDS,      // 6 -> 48 b; 16 was v1's 128 b window
+    parameter ADDR_W = `CFG_ADDR_W      // 3; 4 alongside NWORDS=16. blob_loader's
+) (                                     //    NWORDS/ADDR_W must match -- see its header
     input  wire                  clk,
     input  wire                  rst,        // synchronous, active high
 
