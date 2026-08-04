@@ -95,17 +95,13 @@ module ckpt_block #(
     output wire                          scan_err,
     output wire                          frame_err
 );
-    // TEMP bridge: config_latch/bitplane_buffer/active_pixel_scan/checkpoint_ctrl are
-    // still sync-active-high `rst` until their own tri-style pass. Remove once they move.
-    wire rst = !rst_n;
-
     wire [(3*`T_W)-1:0] t_cfg;
     wire [`PLANES-2:0]  ckpt_en_cfg;
     wire                en_skip, en_vstrobe;
     wire [`PLANES-1:0]  inv_plane;
 
     config_latch #(.NWORDS(CFG_NWORDS), .ADDR_W(CFG_ADDRW)) cfg (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst_n(rst_n),
         .wr_en(cfg_wr_en), .addr(cfg_addr), .wr_data(cfg_wr_data),
         .blob_done(cfg_blob_done), .rd_data(cfg_rd_data),
         .t_cfg(t_cfg), .ckpt_en(ckpt_en_cfg), .en_skip(en_skip), .page_sel(page_sel),
@@ -122,7 +118,7 @@ module ckpt_block #(
     wire             pix_act;
 
     bitplane_buffer bpb (
-        .clk(clk), .rst(rst), .img_start(img_start),
+        .clk(clk), .rst_n(rst_n), .img_start(img_start),
         .ld_en(ld_en), .ld_data(ld_data), .ld_vstrobe(ld_vstrobe),
         .ld_ready(ld_ready), .ld_done(ld_done), .ld_idx(ld_idx),
         .inv_plane(inv_plane), .en_vstrobe(en_vstrobe),
@@ -133,7 +129,7 @@ module ckpt_block #(
     popcount pc (.bits(plane), .count(pop));
 
     active_pixel_scan #(.EN_SKIP_FUSED(EN_SKIP_FUSED)) scan (
-        .clk(clk), .rst(rst), .en_skip(en_skip), .start(scan_start),
+        .clk(clk), .rst_n(rst_n), .en_skip(en_skip), .start(scan_start),
         .plane(plane), .plane_valid(plane_valid), .pop(pop),
         .pix_idx(w1_addr), .pix_act(pix_act), .plane_start(plane_start),
         .plane_end(plane_end), .busy(scan_busy), .plane_len(plane_len),
@@ -166,7 +162,7 @@ module ckpt_block #(
     wire [`T_W-1:0]              t_sel;
 
     checkpoint_ctrl ctrl (
-        .clk(clk), .rst(rst), .img_start(img_start), .plane_end(plane_end),
+        .clk(clk), .rst_n(rst_n), .img_start(img_start), .plane_end(plane_end),
         .ckpt_en(ckpt_en), .t_cfg(t_cfg),
         .tree_done(tree_done), .tree_argmax(tree_argmax),
         .capture(capture), .rd_grp(rd_grp), .rom_addr(rom_addr),
