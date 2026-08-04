@@ -1,267 +1,243 @@
-// ckpt_block -- Fase-1 integration: 13 verified modules, one datapath, +120 flops of
-// new logic (the out-ACC register; l2_mac_x4 is combinational so the accumulator it
-// feeds back into exists nowhere else).
+// checkpoint_ctrl -- lever A1: the conformal-exit checkpoint scheduler.
 //
-// BOUNDARY SKEW: the A1 snapshot below reads acc_next (D side), not acc_live (Q side).
-// plane_end fires DURING a plane's last accumulate cycle, so acc_live at that edge is
-// one pixel short of the plane boundary. Invisible under dense (1/10000 images has a
-// nonzero final pixel), wrong in 69.5% of zero-skip planes. Do not change this wire.
+// The L1 datapath never stalls. At an armed plane boundary this FSM snapshots the L1
+// accumulator into l1_acc_shadow(_cg) and walks it through requant -> L2 -> exit tree
+// over the next GAMMA=11 cycles WHILE the datapath keeps accumulating the next plane.
+// That overlap is A1's entire value: mode 3's no-exit cost is NPIX*PLANES + GAMMA =
+// 267 cycles, identical to same-die mode 1.
 //
-// W1 ROM is a port (w1_addr out / w1_row in), not an instance: w1_h32_case.v holds a
-// DIFFERENT weight fold than requant_rom_x4/l2_weight_rom_x4 (both FINAL4_s12_fold_a),
-// instantiating it makes L1 and L2 compute different networks. rom_addr is shared by
-// both ROMs as P*rd_grp + lane -- lane i must see addr % P == i or it returns silently
-// wrong data.
+// Scheduling rule: check_start(k) = max(end_of_plane(k), prev_check_end). One
+// checkpoint unit, so check k+1 waits for check k. Reference: engine.py's
+// boundary_cycles(overlap=True) -- cycle-exact and index-exact, NOT bit-exact (this
+// module changes WHEN a check starts, never what it computes).
 //
-// No FSM here: img_start/swap/scan_start are inputs (top_fsm.v). K10: inv_plane wires
-// through but stays 0 on page 1 -- inverting needs a row-sum correction that doesn't
-// exist yet (bitplane_buffer.v).
+// Cycle map of one check, S = start cycle: S capture=1; S+1..S+8 rd_grp 0..7 (4 units/
+// cycle through requant+l2_mac_x4); S+9 y_valid (t_sel must be correct THIS cycle, I4);
+// S+11 dec_valid (I5: y at N -> done N+2). 8+1+2=11=GAMMA, checked at elaboration.
+//
+// ONE shadow bank suffices for the frozen {P2,P3} config because: a check only reads
+// the shadow for its first 8 cycles, and ZS_FILL == RD_CYC == 8 by construction (both
+// trace to bitplane_buffer's fill-port width) -- the next plane boundary structurally
+// cannot arrive before the shadow frees. The final snapshot is deliberately DEFERRED to
+// when the final check starts (the ACC is frozen after the last plane, so a late
+// snapshot is still correct) -- a naive end-of-plane-4 capture would clobber an
+// in-flight P3 check 23.4% of the time. This bound is pairwise-adjacent only; a config
+// arming 3 consecutive checkpoints could break it -- not silently: sched_err goes
+// sticky on any capture that would clobber a live read.
+//
+// Controller only -- instantiates no datapath, so "A1 total = l1_acc_shadow_cg +
+// checkpoint_ctrl" is an honest accounting (everything else is shared with mode 1).
+//
+// INVARIANTS (each a silent-wrong-answer risk, not a compile error):
+//   I1  sgn tied 0 -- fold's sign is +1 for all units; sgn=1 in requant_unit negates.
+//   I2  bias_sh = PLANES - k_planes (2 at P2, 1 at P3, 0 at final), ARITHMETIC shift.
+//   I3  oacc_init = b2, not zero -- l2_mac_x4 is a pure accumulator.
+//   I4  t_sel valid on the y_valid cycle, 2 cycles before done.
+//   I5  y at cycle N -> argmax/done/margin at N+2 (DEC_CYC).
+//   I6  >=T compare and lowest-index tie-break live in exit_tree_2stage, not here.
+//   I8  grouped ROM decode requires addr%P==lane; rom_addr is built as P*rd_grp+lane.
 `include "ckpt_defs.vh"
 
-`ifdef SYNTHESIS
-`ifndef SKY130_FD_SC_HD__DLCLKP_1_DECLARED
-`define SKY130_FD_SC_HD__DLCLKP_1_DECLARED
-(* blackbox *)
-(* keep *)
-module sky130_fd_sc_hd__dlclkp_1 (
-    input  CLK,
-    input  GATE,
-    output GCLK
-);
-endmodule
-`endif
-`endif
-
-module ckpt_block #(
-    parameter ACC_CNT       = `ACC_CNT_DEFAULT,
-    parameter W             = `ACC_W,
-    parameter SHADOW_CG     = 1,
-    parameter OACC_CG       = `OACC_CG_DEFAULT,
-    parameter EN_SKIP_FUSED = 0,
-    parameter CFG_NWORDS    = `CFG_WORDS,
-    parameter CFG_ADDRW     = `CFG_ADDR_W,
-    parameter MODE1_ONLY    = 0   // synthesis probe only: ties ckpt_en=0 to price mode 3's cost
-) (
+module checkpoint_ctrl (
     input  wire                          clk,
     input  wire                          rst_n,
 
     input  wire                          img_start,
-    input  wire                          swap,
-    input  wire                          scan_start,
+    input  wire                          plane_end,
 
-    input  wire                          ld_en,
-    input  wire [`LD_W-1:0]              ld_data,
-    input  wire                          ld_vstrobe,
-    output wire                          ld_ready,
-    output wire                          ld_done,
-    output wire [1:0]                    ld_idx,
+    input  wire [`PLANES-2:0]            ckpt_en,
+    input  wire [(3*`T_W)-1:0]           t_cfg,
 
-    output wire [`PIX_W-1:0]             w1_addr,
-    input  wire [(2*`NHID)-1:0]          w1_row,
+    input  wire                          tree_done,
+    input  wire [3:0]                    tree_argmax,
 
-    input  wire                          cfg_wr_en,
-    input  wire [CFG_ADDRW-1:0]          cfg_addr,
-    input  wire [`CFG_W-1:0]             cfg_wr_data,
-    input  wire                          cfg_blob_done,
-    output wire [`CFG_W-1:0]             cfg_rd_data,
-    output wire                          blob_loaded,
-    output wire                          page_sel,
-    output wire [`N_CAP_W-1:0]           n_cap,
+    output wire                          capture,
+    output wire [2:0]                    rd_grp,
 
-    output wire                          plane_start,
-    output wire                          plane_end,
-    output wire                          scan_busy,
-    output wire [`LEN_W-1:0]             plane_len,
-    output wire                          plane_valid,
-    output wire [1:0]                    plane_idx,
-    output wire                          fill_full,
+    output wire [(`P*`CKPT_ADDR_W)-1:0]  rom_addr,
+
+    output wire                          sgn,
+    output wire [1:0]                    bias_sh,
+
+    output wire [`OACC_BUS-1:0]          oacc_init,
+    output wire                          oacc_sel_init,
+    output wire                          oacc_en,
 
     output wire                          y_valid,
+    output wire [`T_W-1:0]               t_sel,
+
     output wire                          dec_valid,
     output wire                          exit_strobe,
     output wire [2:0]                    exit_k,
     output wire [2:0]                    chk_idx,
-    output wire                          ckpt_busy,
-    output wire [3:0]                    answer,
-    output wire [2:0]                    exit_k_held,
-    output wire                          ans_valid,
-
-    output wire [`OACC_BUS-1:0]          y,
-    output wire [3:0]                    tree_argmax,
-    output wire                          tree_done,
-    output wire signed [`OACC_W-1:0]     tree_margin,
-
-    output wire                          sched_err,
-    output wire                          scan_err,
-    output wire                          frame_err
+    output wire                          busy,
+    output reg  [3:0]                    answer,
+    output reg  [2:0]                    exit_k_held,
+    output reg                           ans_valid,
+    output reg                           sched_err
 );
-    wire [(3*`T_W)-1:0] t_cfg;
-    wire [`PLANES-2:0]  ckpt_en_cfg;
-    wire                en_skip, en_vstrobe;
-    wire [`PLANES-1:0]  inv_plane;
+    localparam [3:0] RD_CYC  = `NHID / `P;
+    localparam [3:0] Y_CYC   = (`NHID / `P) + 1;
+    localparam [3:0] DEC_CYC = (`NHID / `P) + 1 + `TREE_LAT;
+    localparam [2:0] FINAL_K = `PLANES;
 
-    config_latch #(.NWORDS(CFG_NWORDS), .ADDR_W(CFG_ADDRW)) cfg (
-        .clk(clk), .rst_n(rst_n),
-        .wr_en(cfg_wr_en), .addr(cfg_addr), .wr_data(cfg_wr_data),
-        .blob_done(cfg_blob_done), .rd_data(cfg_rd_data),
-        .t_cfg(t_cfg), .ckpt_en(ckpt_en_cfg), .en_skip(en_skip), .page_sel(page_sel),
-        .inv_plane(inv_plane), .n_cap(n_cap), .en_vstrobe(en_vstrobe),
-        .blob_loaded(blob_loaded)
-    );
+    reg [2:0] plane_cnt;
+    reg       chk_busy;
+    reg [3:0] chk_cnt;
+    reg [2:0] chk_k;
+    reg       pend_valid;
+    reg [2:0] pend_k;
+    reg       fin_pend;
+    reg       resolved;
 
-    // The mode switch: mode 3 is ckpt_en from the blob, mode 1 is the same net at 0.
-    // Both drain through the same requant/l2_mac_x4/exit_tree_2stage below.
-    wire [`PLANES-2:0] ckpt_en = (MODE1_ONLY != 0) ? {(`PLANES-1){1'b0}} : ckpt_en_cfg;
+    wire [2:0] k_next   = plane_cnt + 3'd1;
+    wire       is_fin_b = (k_next == FINAL_K);
+    wire       armed_here = (k_next == 3'd1) ? ckpt_en[0] :
+                            (k_next == 3'd2) ? ckpt_en[1] :
+                            (k_next == 3'd3) ? ckpt_en[2] : 1'b0;
 
-    wire [`NPIX-1:0] plane;
-    wire [`PC_W-1:0] pop;
-    wire             pix_act;
+    wire dec_now   = chk_busy && (chk_cnt == DEC_CYC);
+    // t_sel is 0 at the final (always-true compare), so this agrees with tree_done by
+    // construction; the explicit chk_k test is belt and braces, not a second policy.
+    wire take_exit = dec_now && ((chk_k == FINAL_K) ? 1'b1 : tree_done);
 
-    bitplane_buffer bpb (
-        .clk(clk), .rst_n(rst_n), .img_start(img_start),
-        .ld_en(ld_en), .ld_data(ld_data), .ld_vstrobe(ld_vstrobe),
-        .ld_ready(ld_ready), .ld_done(ld_done), .ld_idx(ld_idx),
-        .inv_plane(inv_plane), .en_vstrobe(en_vstrobe),
-        .swap(swap), .plane(plane), .plane_valid(plane_valid),
-        .plane_idx(plane_idx), .fill_full(fill_full), .frame_err(frame_err)
-    );
+    // Free this cycle: idle, or the in-flight check resolves now -- start = prev_check_end.
+    wire unit_free = (!chk_busy) || dec_now;
 
-    popcount pc (.bits(plane), .count(pop));
+    wire boundary_check = plane_end && !resolved && !take_exit && (is_fin_b || armed_here);
 
-    active_pixel_scan #(.EN_SKIP_FUSED(EN_SKIP_FUSED)) scan (
-        .clk(clk), .rst_n(rst_n), .en_skip(en_skip), .start(scan_start),
-        .plane(plane), .plane_valid(plane_valid), .pop(pop),
-        .pix_idx(w1_addr), .pix_act(pix_act), .plane_start(plane_start),
-        .plane_end(plane_end), .busy(scan_busy), .plane_len(plane_len),
-        .scan_err(scan_err)
-    );
+    wire start_pend = unit_free && !take_exit &&  pend_valid;
+    wire start_bnd  = unit_free && !take_exit && !pend_valid &&  boundary_check;
+    wire start_fin  = unit_free && !take_exit && !pend_valid && !boundary_check && fin_pend;
+    wire start_now  = start_pend | start_bnd | start_fin;
+    wire [2:0] start_k = start_pend ? pend_k :
+                         start_bnd  ? k_next : FINAL_K;
 
-    wire [(`NHID*W)-1:0] acc_live, acc_next;
+    wire rd_active = chk_busy && (chk_cnt >= 4'd1) && (chk_cnt <= RD_CYC);
 
+    assign rd_grp = rd_active ? (chk_cnt[2:0] - 3'd1) : 3'd0;
+
+    genvar gi;
     generate
-    if (ACC_CNT) begin : g_cnt
-        l1_horner_cnt #(.W(W)) l1 (
-            .clk(clk), .img_start(img_start), .plane_start(plane_start),
-            .act(pix_act), .w_col(w1_row),
-            .acc_live(acc_live), .acc_next(acc_next)
-        );
-    end else begin : g_add
-        l1_horner_acc #(.W(W)) l1 (
-            .clk(clk), .img_start(img_start), .plane_start(plane_start),
-            .act(pix_act), .w_col(w1_row),
-            .acc_live(acc_live), .acc_next(acc_next)
-        );
+        for (gi = 0; gi < `P; gi = gi + 1) begin : lane_addr
+            // I8: lane gi always sees addr % `P == gi.
+            assign rom_addr[`CKPT_ADDR_W*gi +: `CKPT_ADDR_W] = (rd_grp * `P) + gi;
+        end
+    endgenerate
+
+    // Immediate capture for an armed non-final boundary (ACC moves on right away);
+    // deferred to the final check's start for the last plane -- see header.
+    assign capture = (boundary_check && !is_fin_b)
+                  || (start_now && (start_k == FINAL_K));
+
+    assign sgn = 1'b0;   // I1
+
+    wire [2:0] bias_sh_full = FINAL_K - chk_k;   // I2
+    assign bias_sh = bias_sh_full[1:0];
+
+    // I3: b2 from FINAL4_s12_fold_a.npz, class 9 (MSB) down to class 0.
+    assign oacc_init = { `OACC_W'sh001,   // b2[9] =  1
+                         `OACC_W'sh003,   // b2[8] =  3
+                         `OACC_W'shffe,   // b2[7] = -2
+                         `OACC_W'sh000,   // b2[6] =  0
+                         `OACC_W'shfff,   // b2[5] = -1
+                         `OACC_W'shfff,   // b2[4] = -1
+                         `OACC_W'sh000,   // b2[3] =  0
+                         `OACC_W'sh000,   // b2[2] =  0
+                         `OACC_W'shffe,   // b2[1] = -2
+                         `OACC_W'sh000 }; // b2[0] =  0
+    assign oacc_sel_init = chk_busy && (chk_cnt == 4'd1);
+    assign oacc_en       = rd_active;
+
+    assign y_valid = chk_busy && (chk_cnt == Y_CYC);
+
+    assign t_sel = (chk_k == 3'd1) ? t_cfg[0*`T_W +: `T_W] :
+                   (chk_k == 3'd2) ? t_cfg[1*`T_W +: `T_W] :
+                   (chk_k == 3'd3) ? t_cfg[2*`T_W +: `T_W] : {`T_W{1'b0}};
+
+    assign dec_valid   = dec_now;
+    assign exit_strobe = take_exit;
+    assign exit_k      = (chk_k == FINAL_K) ? 3'd0 : chk_k;
+    assign chk_idx     = chk_k;
+    assign busy        = chk_busy;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            plane_cnt  <= 3'd0;
+            chk_busy   <= 1'b0;
+            chk_cnt    <= 4'd0;
+            chk_k      <= 3'd0;
+            pend_valid <= 1'b0;
+            pend_k     <= 3'd0;
+            fin_pend   <= 1'b0;
+            resolved   <= 1'b0;
+            exit_k_held <= 3'd0;
+            answer     <= 4'd0;
+            ans_valid  <= 1'b0;
+            sched_err  <= 1'b0;
+        end else if (img_start) begin
+            // Starting an image while a check is still in flight would drop it.
+            if (chk_busy || pend_valid || fin_pend) sched_err <= 1'b1;
+            plane_cnt  <= 3'd0;
+            chk_busy   <= 1'b0;
+            chk_cnt    <= 4'd0;
+            pend_valid <= 1'b0;
+            fin_pend   <= 1'b0;
+            resolved   <= 1'b0;
+            ans_valid  <= 1'b0;
+        end else begin
+            ans_valid <= 1'b0;
+
+            if (plane_end) plane_cnt <= plane_cnt + 3'd1;
+
+            if (boundary_check && !start_bnd) begin
+                if (is_fin_b) begin
+                    fin_pend <= 1'b1;
+                end else begin
+                    if (pend_valid) sched_err <= 1'b1;   // one pending slot only
+                    pend_valid <= 1'b1;
+                    pend_k     <= k_next;
+                end
+            end
+
+            if (start_now) begin
+                chk_busy <= 1'b1;
+                chk_cnt  <= 4'd1;
+                chk_k    <= start_k;
+                if (start_pend) pend_valid <= 1'b0;
+                if (start_fin)  fin_pend   <= 1'b0;
+            end else if (dec_now) begin
+                chk_busy <= 1'b0;
+                chk_cnt  <= 4'd0;
+            end else if (chk_busy) begin
+                chk_cnt  <= chk_cnt + 4'd1;
+            end
+
+            if (take_exit) begin
+                resolved   <= 1'b1;
+                pend_valid <= 1'b0;
+                fin_pend   <= 1'b0;
+                exit_k_held <= (chk_k == FINAL_K) ? 3'd0 : chk_k;
+                answer     <= tree_argmax;
+                ans_valid  <= 1'b1;
+            end
+
+            // A capture on a read cycle other than the last would destroy the in-flight
+            // check's snapshot -- unreachable for the frozen {P2,P3} config, loud if not.
+            if (capture && rd_active && (chk_cnt != RD_CYC)) sched_err <= 1'b1;
+        end
     end
-    endgenerate
-
-    wire                         capture, sgn, oacc_sel_init, oacc_en;
-    wire [2:0]                   rd_grp;
-    wire [(`P*`CKPT_ADDR_W)-1:0] rom_addr;
-    wire [1:0]                   bias_sh;
-    wire [`OACC_BUS-1:0]         oacc_init;
-    wire [`T_W-1:0]              t_sel;
-
-    checkpoint_ctrl ctrl (
-        .clk(clk), .rst_n(rst_n), .img_start(img_start), .plane_end(plane_end),
-        .ckpt_en(ckpt_en), .t_cfg(t_cfg),
-        .tree_done(tree_done), .tree_argmax(tree_argmax),
-        .capture(capture), .rd_grp(rd_grp), .rom_addr(rom_addr),
-        .sgn(sgn), .bias_sh(bias_sh),
-        .oacc_init(oacc_init), .oacc_sel_init(oacc_sel_init), .oacc_en(oacc_en),
-        .y_valid(y_valid), .t_sel(t_sel),
-        .dec_valid(dec_valid), .exit_strobe(exit_strobe), .exit_k(exit_k),
-        .chk_idx(chk_idx), .busy(ckpt_busy), .answer(answer),
-        .exit_k_held(exit_k_held), .ans_valid(ans_valid), .sched_err(sched_err)
-    );
-
-    // acc_NEXT, not acc_live -- see BOUNDARY SKEW above.
-    wire [(`P*W)-1:0] a1_out;
-    generate
-        if (SHADOW_CG != 0) begin : shadow_cg
-            l1_acc_shadow_cg #(.W(W)) bank (
-                .clk(clk), .capture(capture), .acc_live(acc_next),
-                .rd_grp(rd_grp), .a1_out(a1_out)
-            );
-        end else begin : shadow_en
-            l1_acc_shadow #(.W(W)) bank (
-                .clk(clk), .capture(capture), .acc_live(acc_next),
-                .rd_grp(rd_grp), .a1_out(a1_out)
-            );
-        end
-    endgenerate
-
-    wire [(`P*`THETAK_ROW_W)-1:0] thetak;
-    wire [(`P*`W2_ROW_W)-1:0]     w2col;
-    requant_rom_x4   rq  (.addr(rom_addr), .wcol(thetak));
-    l2_weight_rom_x4 w2r (.addr(rom_addr), .wcol(w2col));
-
-    wire [(`P*`H_W)-1:0] h;
-    genvar u;
-    generate
-        for (u = 0; u < `P; u = u + 1) begin : lane
-            wire signed [`CKPT_BIAS_W-1:0] bias_raw =
-                thetak[`THETAK_ROW_W*u +: `CKPT_BIAS_W];
-            wire [`K_W-1:0] kq =
-                thetak[`THETAK_ROW_W*u + `CKPT_BIAS_W +: `K_W];
-            wire signed [W-1:0] a1_raw = a1_out[W*u +: W];
-
-            wire signed [`BIAS_W-1:0] bias_ext = $signed(bias_raw);
-            wire signed [`BIAS_W-1:0] bias_shf = bias_ext >>> bias_sh;
-            wire signed [`BIAS_W-1:0] a1_ext   = $signed(a1_raw);
-
-            requant_unit ru (
-                .a1   (a1_ext),
-                .sgn  (sgn),
-                .bias (bias_shf),
-                .k    (kq),
-                .h    (h[`H_W*u +: `H_W])
-            );
-        end
-    endgenerate
-
-    reg  [`OACC_BUS-1:0] oacc;
-    wire [`OACC_BUS-1:0] acc_in = oacc_sel_init ? oacc_init : oacc;
-    wire [`OACC_BUS-1:0] acc_out;
-
-    l2_mac_x4 mac (.h_in(h), .w_in(w2col), .acc_in(acc_in), .acc_out(acc_out));
-
-    generate
-        if (OACC_CG != 0) begin : oacc_gated
-            wire ogclk;
-`ifdef SYNTHESIS
-            sky130_fd_sc_hd__dlclkp_1 ocg (.CLK(clk), .GATE(oacc_en), .GCLK(ogclk));
-`else
-            reg ogate;
-            always @(*)
-                if (!clk) ogate = oacc_en;
-            assign ogclk = clk & ogate;
-`endif
-            always @(posedge ogclk) oacc <= acc_out;
-        end else begin : oacc_enabled
-            always @(posedge clk)
-                if (oacc_en) oacc <= acc_out;
-        end
-    endgenerate
-
-    assign y = oacc;
-
-    exit_tree_2stage tree (
-        .clk(clk), .y(oacc), .T(t_sel),
-        .argmax(tree_argmax), .done(tree_done), .margin(tree_margin)
-    );
 
 `ifndef SYNTHESIS
     initial begin
-        if (`OACC_BUS != 120) begin
-            $display("ckpt_block: FAIL `OACC_BUS = %0d, l2_mac_x4 is fixed at 120", `OACC_BUS);
+        if ((`NHID / `P) + 1 + `TREE_LAT != `GAMMA) begin
+            $display("checkpoint_ctrl: FAIL GAMMA mismatch: NHID/P + 1 + TREE_LAT = %0d, GAMMA = %0d",
+                     (`NHID / `P) + 1 + `TREE_LAT, `GAMMA);
             $finish;
         end
-        if (`P != 4) begin
-            $display("ckpt_block: FAIL `P = %0d, the x4 ROMs and l2_mac_x4 are fixed at 4", `P);
-            $finish;
-        end
-        if (W > `BIAS_W) begin
-            $display("ckpt_block: FAIL W = %0d does not fit requant_unit's %0d b ports", W, `BIAS_W);
+        if ((`NHID / `P) != `ZS_FILL) begin
+            $display("checkpoint_ctrl: FAIL single-shadow bound broken: NHID/P = %0d, ZS_FILL = %0d",
+                     (`NHID / `P), `ZS_FILL);
             $finish;
         end
     end
