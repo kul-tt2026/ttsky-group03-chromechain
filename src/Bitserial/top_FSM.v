@@ -44,7 +44,7 @@ module top_fsm(input  wire                clk,
     assign planes_run  = pstarted;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (!rst_n) begin
             running      <= 1'b0;
             priming      <= 1'b0;
             scan_start_r <= 1'b0;
