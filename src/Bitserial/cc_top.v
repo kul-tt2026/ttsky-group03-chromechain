@@ -85,7 +85,7 @@ module cc_top #(
         .clk(clk), .rst_n(rst_n),
         .start(start), .blob_loaded(blob_loaded), .n_cap(n_cap),
         .fill_full(fill_full), .scan_busy(scan_busy), .plane_end(plane_end),
-        .exit_strobe(exit_strobe), .ans_valid(blk_ans_valid),
+        .exit_strobe(exit_strobe), .ans_valid(blk_ans_valid), .ckpt_busy(ckpt_busy),
         .img_start(img_start), .swap(swap), .scan_start(scan_start),
         .busy(busy), .done(done), .planes_run(), .cap_err(cap_err)
     );
