@@ -10,6 +10,7 @@ module top_fsm(input  wire                clk,
                input  wire                plane_end,
                input  wire                exit_strobe,
                input  wire                ans_valid,
+               input  wire                ckpt_busy,
                output reg                 img_start,
                output wire                swap,
                output wire                scan_start,
@@ -43,6 +44,22 @@ module top_fsm(input  wire                clk,
     assign busy        = running;
     assign planes_run  = pstarted;
 
+    // WATCHDOG: a config with n_cap < `PLANES stops plane streaming before the
+    // always-true final check (which only fires at k_next == `PLANES) is ever
+    // scheduled. If no early checkpoint armed at the capped boundary takes the
+    // exit either, checkpoint_ctrl goes idle forever and ans_valid never comes --
+    // busy would stick high until reset, silently. `GAMMA + 4 idle cycles is more
+    // than one full check latency, so a check that is still running or about to
+    // start always resets this counter to 0 before it trips -- margin, not a
+    // race. Trips loud into cap_err instead of hanging; does not touch the
+    // ans_valid/exit_strobe path used by every config that actually resolves.
+    localparam [4:0] WD_LIMIT = `GAMMA + 4;
+
+    wire       streaming_done = running && !priming && !scan_busy && !more_planes;
+    wire       wd_tick        = streaming_done && !ckpt_busy && !ans_valid && !exit_strobe;
+    reg  [4:0] wd_cnt;
+    wire       wd_trip        = (wd_cnt == WD_LIMIT);
+
     always @(posedge clk) begin
         if (!rst_n) begin
             running      <= 1'b0;
@@ -53,9 +70,11 @@ module top_fsm(input  wire                clk,
             img_start    <= 1'b0;
             done         <= 1'b0;
             cap_err      <= 1'b0;
+            wd_cnt       <= 5'd0;
         end else begin
             img_start <= start && blob_loaded && !running;
             done      <= ans_valid;
+            wd_cnt <= wd_tick ? (wd_cnt + 5'd1) : 5'd0;
 
             if (start && blob_loaded && !running) begin
                 running  <= 1'b1;
@@ -67,7 +86,10 @@ module top_fsm(input  wire                clk,
                 if (want_swap)   priming  <= 1'b0;
                 if (want_swap)   pstarted <= pstarted + 3'd1;
                 if (exit_strobe) stopped  <= 1'b1;
-                if (ans_valid)   running  <= 1'b0;
+                if (ans_valid || wd_trip) begin
+                    running <= 1'b0;
+                    if (wd_trip) cap_err <= 1'b1;
+                end
             end
 
             scan_start_r <= want_swap;
