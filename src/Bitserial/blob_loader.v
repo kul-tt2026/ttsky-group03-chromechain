@@ -43,11 +43,12 @@ module blob_loader #(
     reg [ADDR_W:0] cnt;
     reg            mode_q;
 
-    wire mode_rise = cfg_mode && !mode_q;
-    wire last_word = (cnt == NWORDS - 1);
-    wire in_range  = (cnt < NWORDS);
-    wire take      = cfg_mode && cfg_stb && in_range;
-    wire overrun   = cfg_mode && cfg_stb && !in_range;
+    wire            mode_rise = cfg_mode && !mode_q;
+    wire [ADDR_W:0] cnt_eff   = mode_rise ? {(ADDR_W+1){1'b0}} : cnt;
+    wire            last_word = (cnt_eff == NWORDS - 1);
+    wire            in_range  = (cnt_eff < NWORDS);
+    wire            take      = cfg_mode && cfg_stb && in_range;
+    wire            overrun   = cfg_mode && cfg_stb && !in_range;
 
     assign loading    = cfg_mode && in_range;
     assign words_seen = cnt;
@@ -65,21 +66,19 @@ module blob_loader #(
             mode_q <= cfg_mode;
 
             // Rising edge of cfg_mode restarts the load and clears the error, so a
-            // retry is a clean retry -- the only reset path a host needs.
-            if (mode_rise) begin
-                cnt      <= 0;
-                blob_err <= 1'b0;
-            end else if (take) begin
-                cnt <= cnt + 1'b1;
-            end
+            // retry is a clean retry -- the only reset path a host needs. cnt_eff
+            // (not cnt) already reflects the restart, so this is now a single
+            // unconditional update instead of a mode_rise/take branch.
+            cnt <= cnt_eff + (take ? 1'b1 : 1'b0);
 
             cfg_wr_en   <= take;
-            cfg_addr    <= cnt[ADDR_W-1:0];
+            cfg_addr    <= cnt_eff[ADDR_W-1:0];
             cfg_wr_data <= cfg_din;
 
             cfg_blob_done <= take && last_word;
 
-            if (overrun) blob_err <= 1'b1;
+            if (mode_rise) blob_err <= 1'b0;
+            if (overrun)   blob_err <= 1'b1;
         end
     end
 
