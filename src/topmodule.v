@@ -102,7 +102,7 @@ module nn_top(input  wire clk,
     // w2_all[2c+1:2c] is class c's weight -- identical values, one lookup
     // instead of 10. bias_rom_L2 is untouched -- still needs its own content.
     wire [19:0] w2_all;
-    gewicht_rom_L2_wide u_wrom2(
+    gewicht_rom_L2 u_rom2(
         .neuron_index(neuron_idx),
         .w2_all(w2_all)
     );

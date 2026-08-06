@@ -1,4 +1,4 @@
-module gewicht_rom_L2_wide(
+module gewicht_rom_L2(
     input  wire [4:0] neuron_index,      // 0..31, which hidden unit
     output reg  [19:0] w2_all            // 10 classes x 2b signed weight, class c at [2c+1:2c]
 );
