@@ -1,11 +1,11 @@
 # Tiny Tapeout project information
 project:
-  title:        ""      # Project title
-  author:       ""      # Your name
-  discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  ""      # One line description of what your project does
+  title:        "neural"      # Project title
+  author:       "chrome chains"      # Your name
+  discord:      "no"      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
+  description:  "digit recognition"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
-  clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
+  clock_hz:     10000000       # Clock frequency in Hz (or 0 if not applicable)
 
   # How many tiles your design occupies? A single tile is about 167x108 uM.
   tiles: "3x2"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
@@ -34,34 +34,34 @@ project:
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  ui[0]: "w1"
+  ui[1]: "w2"
+  ui[2]: "w3"
+  ui[3]: "w4"
+  ui[4]: "w5"
+  ui[5]: "w6"
+  ui[6]: "w7"
+  ui[7]: "w8"
 
   # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
+  uo[0]: "o1"
+  uo[1]: "o2"
+  uo[2]: "o3"
+  uo[3]: "o4"
+  uo[4]: "o5"
   uo[5]: ""
   uo[6]: ""
   uo[7]: ""
 
   # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  uio[0]: "w9"
+  uio[1]: "w10"
+  uio[2]: "w11"
+  uio[3]: "w12"
+  uio[4]: "w13"
+  uio[5]: "w14"
+  uio[6]: "w15"
+  uio[7]: "w16"
 
 # Do not change!
 yaml_version: 6
