@@ -403,9 +403,18 @@ module ckpt_block #(
 `ifdef SYNTHESIS
             sky130_fd_sc_hd__dlclkp_1 ocg (.CLK(clk), .GATE(oacc_en), .GCLK(ogclk));
 `else
+            // INTENTIONAL LATCH -- it is the whole point of the model: the dlclkp_1
+            // cell's internal M0, transparent to GATE while CLK is low and holding
+            // while CLK is high. Verilator's LATCH check is an ERROR in librelane's
+            // lint step (Checker.LintErrors), so silence it around exactly the lines
+            // that mean it rather than globally in config.json. NOT `always_latch`:
+            // that is a SystemVerilog keyword, and a tool-dialect mismatch is what
+            // took this repo's CI down once already.
             reg ogate;
+            /* verilator lint_off LATCH */
             always @(*)
                 if (!clk) ogate = oacc_en;
+            /* verilator lint_on LATCH */
             assign ogclk = clk & ogate;
 `endif
             always @(posedge ogclk) oacc <= acc_out;

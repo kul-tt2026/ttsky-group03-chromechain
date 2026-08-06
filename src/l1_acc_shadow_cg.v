@@ -80,9 +80,17 @@ module l1_acc_shadow_cg #(parameter W = `ACC_W) (
         .GCLK (gclk)
     );
 `else
+    // INTENTIONAL LATCH -- this is the M0 transcription described in the header:
+    // transparent to GATE while CLK is low, holding while CLK is high. Verilator's
+    // LATCH check is an ERROR in librelane's lint step (Checker.LintErrors), so it is
+    // silenced around exactly these lines rather than globally in config.json. NOT
+    // `always_latch`: that is a SystemVerilog keyword, and a tool-dialect mismatch is
+    // what took this repo's CI down once already.
     reg gate_latched;
+    /* verilator lint_off LATCH */
     always @(*)
         if (!clk) gate_latched = capture;
+    /* verilator lint_on LATCH */
     assign gclk = clk & gate_latched;
 `endif
 
