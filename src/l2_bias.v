@@ -1,7 +1,7 @@
-module bias_rom_L2(input wire [3:0] class_idx,
+module bias_rom_L2(input wire [3:0] class_index,
                    output reg signed [2:0] bias);
     always@(*) begin
-        case(class_idx)
+        case(class_index)
             4'd0: bias = 3'sd1;
             4'd1: bias = 3'sd3;
             4'd2: bias = -3'sd2;
