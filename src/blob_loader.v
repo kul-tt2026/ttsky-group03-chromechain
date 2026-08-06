@@ -67,8 +67,19 @@ module blob_loader #(
     reg            mode_q;
 
     wire mode_rise = cfg_mode && !mode_q;
-    wire last_word = (cnt == NWORDS - 1);
-    wire in_range  = (cnt < NWORDS);
+
+    // A host may raise cfg_mode in the SAME cycle as its first cfg_stb -- the simplest
+    // one does exactly that, and test/test.py::test_config_load is that host. `cnt_eff`
+    // is the count this cycle's strobe acts on, so a restart and a first word can land
+    // together: the word goes to address 0 and IS counted. Without it the write still
+    // happened (cfg_wr_en was never gated by mode_rise) but the counter was reset
+    // instead of incremented, so every later word landed one address low, the final
+    // strobe never saw `last_word`, and blob_done never pulsed -- a chip that never
+    // becomes ready, with blob_err clear and nothing to explain why.
+    wire [ADDR_W:0] cnt_eff = mode_rise ? 0 : cnt;
+
+    wire last_word = (cnt_eff == NWORDS - 1);
+    wire in_range  = (cnt_eff < NWORDS);
     wire take      = cfg_mode && cfg_stb && in_range;
     wire overrun   = cfg_mode && cfg_stb && !in_range;
 
@@ -88,16 +99,16 @@ module blob_loader #(
             mode_q <= cfg_mode;
 
             // rising edge of cfg_mode restarts the load -- the only reset path a host
-            // needs, and it clears the error so a retry is a clean retry.
-            if (mode_rise) begin
-                cnt      <= 0;
-                blob_err <= 1'b0;
-            end else if (take) begin
-                cnt <= cnt + 1'b1;
-            end
+            // needs, and it clears the error so a retry is a clean retry. The restart
+            // and the first word may be the SAME cycle, so the count advances from
+            // cnt_eff and `take` is tested before the bare restart.
+            if (mode_rise) blob_err <= 1'b0;
+
+            if (take)           cnt <= cnt_eff + 1'b1;
+            else if (mode_rise) cnt <= 0;
 
             cfg_wr_en   <= take;
-            cfg_addr    <= cnt[ADDR_W-1:0];
+            cfg_addr    <= cnt_eff[ADDR_W-1:0];
             cfg_wr_data <= cfg_din;
 
             // one-cycle pulse, on the strobe that takes the final word

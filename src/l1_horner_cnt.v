@@ -54,7 +54,7 @@ module l1_horner_cnt #(parameter W = `ACC_W) (
             wire [W:0] c;
             wire [W-1:0] nxt_w;
             assign c[0] = inc | dn;
-            for (b = 0; b < W; b = b + 1) begin : bit
+            for (b = 0; b < W; b = b + 1) begin : bcell
                 assign nxt_w[b] = base[b] ^ c[b];
                 assign c[b+1]   = c[b] & (base[b] ^ dn);
             end
