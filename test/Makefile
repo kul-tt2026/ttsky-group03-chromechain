@@ -6,7 +6,18 @@ SIM             ?= icarus
 FST             ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG   ?= verilog
 SRC_DIR          = $(PWD)/../src
-PROJECT_SOURCES  = project.v
+PROJECT_SOURCES  = project.v \
+                   topmodule.v \
+				   controller.v \
+				   argmax.v \
+				   zero_skip_pixel_serial.v \
+				   ternary_mac_L1.v \
+				   ternary_mac_L2.v \
+				   rekwantisatie.v \
+				   rekwantisatie_rom.v \
+				   l1_weight_rom.v \
+				   l2_weight_rom.v \
+				   l2_bias.v
 
 ifneq ($(GATES),yes)
 

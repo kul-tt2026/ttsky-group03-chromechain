@@ -16,7 +16,8 @@ module nn_top(input  wire clk,
     wire [4:0]  neuron_idx, window_idx;
     wire [3:0]  class_idx;
     wire        ctrl_result_valid;
-    wire        window_ready;   
+    wire        window_ready;
+    wire [4:0] scan_base_full = window_idx - 5'd1;   
 
 
     reg  [15:0] window_reg;
@@ -50,7 +51,7 @@ module nn_top(input  wire clk,
         .clk(clk), .rst_n(rst_n),
         .scan(scan_req && window_ready),  
         .window(window_reg),
-        .window_base(window_idx[3:0]),
+        .window_base(scan_base_full[3:0]),
         .next(next_req),
         .pixel(zs_pixel),
         .index(zs_index),
@@ -92,12 +93,6 @@ module nn_top(input  wire clk,
         .bias(q_bias), .k(q_k),
         .h(h_value)
     );
-
-    reg [3:0] hidden_mem [0:31];
-    always @(posedge clk) begin
-        if (quantize_now)
-            hidden_mem[neuron_idx] <= h_value;
-    end
 
     wire signed [6:0] l2_bias[0:9];
     wire signed [9:0] l2_acc [0:9];
