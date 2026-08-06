@@ -3,7 +3,7 @@ module ternary_mac_L2(input wire clk,
                       input wire en,
                       input wire clear,
                       input wire [3:0] neuron,
-                      input wire signed [6:0] bias,
+                      input wire signed [2:0] bias,
                       input wire signed [1:0] weight,
                       output reg signed [9:0] accumulator);
     
