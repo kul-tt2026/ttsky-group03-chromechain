@@ -78,18 +78,20 @@ module zero_skip_pixel_serial(input wire clk,
             end
 
             if (next && valid) begin
-                if(read_pointer + 1'b1 >= count_r[active]) begin
-                    occupied[active] <= 1'b0;
-                    read_pointer <= 3'd0;
-                    if (occupied[other]) active <= other;
-                end else begin
-                    read_pointer <= read_pointer + 1'b1;
+                            if(read_pointer + 1'b1 >= count_r[active]) begin
+                                occupied[active] <= 1'b0;
+                                read_pointer <= 3'd0;
+                                if (occupied[other]) active <= other;
+                            end else begin
+                                read_pointer <= read_pointer + 1'b1;
+                            end
+                        end else if (!occupied[active] && occupied[other]) begin
+                            active <= other;
+                        end
+                    end
                 end
-            end
-        end
-    end
 assign pixel = pix_r[active][read_pointer[1:0]];
 assign index = {base_r[active], pos_r[active][read_pointer[1:0]]};
 assign valid = occupied[active] && (read_pointer < count_r[active]);
-assign buffer_free = !occupied[other];
+assign buffer_free = !occupied[other] && !scan;
 endmodule
