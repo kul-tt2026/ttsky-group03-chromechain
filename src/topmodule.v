@@ -94,7 +94,7 @@ module nn_top(input  wire clk,
         .h(h_value)
     );
 
-    wire signed [6:0] l2_bias[0:9];
+    wire signed [2:0] l2_bias[0:9];
     wire signed [9:0] l2_acc [0:9];
 
     // ONE shared decoder for all 10 class lanes (was: 10 separate
