@@ -18,7 +18,7 @@ project:
   # 6.22 tiles, measured on a flattened synthesis of tt_um_kul_chromechain against the
   # same liberty and tile denominator as every other number in the design repo. 4x2 is
   # the smallest standard size that fits; 3x2 (6 tiles) does not, even pre-P&R.
-  tiles: "4x2"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
+  tiles: "3x2"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
 
   # Your top module name must start with "tt_um_". Make it unique by including your github username:
   top_module:  "tt_um_kul_chromechain"
