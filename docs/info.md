@@ -9,12 +9,13 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-Explain how your project works
+MNIST digit recognition
 
 ## How to test
 
-Explain how to use your project
+Point camera to a digit
 
 ## External hardware
 
-List external hardware used in your project (e.g. PMOD, LED display, etc), if any
+Arduino, and camera
+
