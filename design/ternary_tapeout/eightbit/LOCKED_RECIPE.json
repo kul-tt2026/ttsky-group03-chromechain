@@ -1,0 +1,84 @@
+{
+  "recipe_name": "FINAL4 — 4-bit input, no KD",
+  "status": "RECOMMENDED (zero RTL change)",
+  "provenance": {
+    "derived_from": "enlarged_train.py ctrl54k_ lineage (mix=1.0, pure MNIST-54k)",
+    "code_path_gate": "bit-exact reproduction of the published 4-bit path (A7 gate, 3 seeds)",
+    "published_baseline_test_shift": 0.9084
+  },
+
+  "data": {
+    "input_quantization": "8x8 overlapping avg-pool -> clip(round_half_even(sum*15/(16*255)), 0, 15)",
+    "input_bits": 4,
+    "pool_bins": [[0,4],[3,7],[7,11],[10,14],[14,18],[17,21],[21,25],[24,28]],
+    "npix_per_bin": 16,
+    "train_set": "MNIST train minus 6k val = 54,000 images",
+    "val_split": "two-stage, SPLIT_SEED=1234: sel=3000, conf=3000, disjoint from train and each other",
+    "contamination_guard": "XNIST/QMNIST writer-series guard retained in the cache build (series != 4); NOT used in the winning recipe (mix=1.0 is pure MNIST)",
+    "augmentation": "NONE — structurally absent from the study module (Piste 6 locked by construction)"
+  },
+
+  "model": {
+    "architecture": "64 -> 32 -> 10",
+    "H": 32,
+    "weights": "ternary {-1,0,+1}, absmean threshold used ONLY for ternarization (folded away)",
+    "thr": 1.0,
+    "hidden_requant": "h = clip((a1*sign + bias) >> k, 0, 15)",
+    "hidden_clip": [0, 15],
+    "layer2": "ternary + integer bias b2, argmax with lowest-index tie-break"
+  },
+
+  "training": {
+    "phase1_steps": 22800,
+    "phase2_steps": 11400,
+    "_step_budget_note": "== 200+100 epochs of 58k at bs=512",
+    "batch_size": 512,
+    "lr_phase1": 0.003,
+    "lr_phase2": 0.001,
+    "warmup_steps": 342,
+    "schedule": "cosine",
+    "optimizer": "AdamW, weight_decay=0.0",
+    "label_smoothing": 0.05,
+    "kd_alpha": 0.0,
+    "kd_temperature": null,
+    "_kd_note": "KD REMOVED. alpha=0.3 was costing +1.472pp on this lineage (p=9.5e-09, n=20 paired seeds).",
+    "phase2_requant": "power-of-two (snap_pow2 + bit-exact hardware forward, STE on log2 scale)",
+    "shift_range_allowed": [0, 12],
+    "determinism": "torch.set_num_threads(1) — PINNED. Different thread counts give different (internally reproducible) results."
+  },
+
+  "selection": {
+    "n_seeds": 32,
+    "protocol": "rank on val sel-3k, take top-4, re-rank on val conf-3k",
+    "champion_seed": 12,
+    "val_sel_shift": 0.9177,
+    "val_conf_shift": 0.9300
+  },
+
+  "final_test": {
+    "n": 10000,
+    "test_shift_only": 0.9256,
+    "test_fixed_point": 0.9269,
+    "delta_vs_published_shift": "+1.72pp",
+    "delta_vs_published_fixed": "+1.06pp",
+    "test_reads": 1,
+    "ledger": "eightbit/TEST_LEDGER.jsonl"
+  },
+
+  "hardware_realized": {
+    "input_bits": 4,
+    "W1_nonzero_frac": 0.6167,
+    "a1_observed": [-130, 95],
+    "a1_worst_case": [-690, 690],
+    "a1_bits_signed": 11,
+    "shift_k_values": {"0": 2, "1": 28, "2": 2},
+    "shift_field_bits": 2,
+    "bias_absmax": 29,
+    "bias_bits_signed": 6,
+    "b2_absmax": 3,
+    "a2_observed": [-92, 84],
+    "a2_worst_case": [-408, 408],
+    "a2_bits_signed": 10,
+    "rtl_changes_required": "NONE — every field is within the shipped 4-bit design envelope"
+  }
+}
