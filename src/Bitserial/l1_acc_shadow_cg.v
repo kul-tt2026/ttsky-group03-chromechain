@@ -52,8 +52,14 @@ module l1_acc_shadow_cg #(parameter W = `ACC_W) (
     );
 `else
     reg gate_latched;
+    // verilator lint_off LATCH
+    // Intentional: behavioural model of dlclkp_1's transparent latch (GATE while CLK
+    // is low, holds while CLK is high), transcribed from the liberty statetable per
+    // the file header above. Only used in simulation -- ifdef SYNTHESIS above
+    // instantiates the real cell instead.
     always @(*)
         if (!clk) gate_latched = capture;
+    // verilator lint_on LATCH
     assign gclk = clk & gate_latched;
 `endif
 

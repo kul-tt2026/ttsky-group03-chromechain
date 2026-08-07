@@ -236,8 +236,14 @@ module ckpt_block #(
             sky130_fd_sc_hd__dlclkp_1 ocg (.CLK(clk), .GATE(oacc_en), .GCLK(ogclk));
 `else
             reg ogate;
+            // verilator lint_off LATCH
+            // Intentional: behavioural model of sky130_fd_sc_hd__dlclkp_1's transparent
+            // latch (used only in simulation -- the `ifdef SYNTHESIS branch above
+            // instantiates the real cell instead), see l1_acc_shadow_cg.v for the
+            // liberty statetable this is transcribed from.
             always @(*)
                 if (!clk) ogate = oacc_en;
+            // verilator lint_on LATCH
             assign ogclk = clk & ogate;
 `endif
             always @(posedge ogclk) oacc <= acc_out;
