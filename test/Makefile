@@ -6,18 +6,27 @@ SIM             ?= icarus
 FST             ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG   ?= verilog
 SRC_DIR          = $(PWD)/../src
-PROJECT_SOURCES  = project.v \
-                   topmodule.v \
-				   controller.v \
-				   argmax.v \
-				   zero_skip_pixel_serial.v \
-				   ternary_mac_L1.v \
-				   ternary_mac_L2.v \
-				   rekwantisatie.v \
-				   rekwantisatie_rom.v \
-				   l1_weight_rom.v \
-				   l2_weight_rom.v \
-				   l2_bias.v
+PROJECT_SOURCES  = tt_um_kul_chromechain.v \
+                   cc_top.v \
+                   top_fsm.v \
+                   blob_loader.v \
+                   w1_rom_final4.v \
+                   ckpt_block.v \
+                   bitplane_buffer.v \
+                   popcount.v \
+                   active_pixel_scan.v \
+                   l1_horner_acc.v \
+                   l1_horner_cnt.v \
+                   l1_acc_shadow.v \
+                   l1_acc_shadow_cg.v \
+                   checkpoint_ctrl.v \
+                   requant_rom_x4.v \
+                   l2_weight_rom_x4.v \
+                   config_latch.v \
+                   requant_unit.v \
+                   l2_mac_x4.v \
+                   max2_node.v \
+                   exit_tree_2stage.v
 
 ifneq ($(GATES),yes)
 

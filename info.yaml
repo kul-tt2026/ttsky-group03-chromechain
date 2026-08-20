@@ -1,6 +1,6 @@
 # Tiny Tapeout project information
 project:
-  title:        "neural"      # Project title
+  title:        "Chrome Chain"      # Project title
   author:       "chrome chains"      # Your name
   discord:      "no"      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
   description:  "digit recognition"      # One line description of what your project does
@@ -11,24 +11,33 @@ project:
   tiles: "4x2"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
 
   # Your top module name must start with "tt_um_". Make it unique by including your github username:
-  top_module:  "tt_um_neural"
+  top_module:  "tt_um_kul_chromechain"
 
   # List your project's source files here.
   # Source files must be in ./src and you must list each source file separately, one per line.
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
-    - "project.v"
-    - "topmodule.v"
-    - "controller.v"
-    - "argmax.v"
-    - "zero_skip_pixel_serial.v"
-    - "ternary_mac_L1.v"
-    - "ternary_mac_L2.v"
-    - "rekwantisatie.v"
-    - "rekwantisatie_rom.v"
-    - "l1_weight_rom.v"
-    - "l2_weight_rom.v"
-    - "l2_bias.v"
+    - "tt_um_kul_chromechain.v"
+    - "cc_top.v"
+    - "top_fsm.v"
+    - "blob_loader.v"
+    - "w1_rom_final4.v"
+    - "ckpt_block.v"
+    - "bitplane_buffer.v"
+    - "popcount.v"
+    - "active_pixel_scan.v"
+    - "l1_horner_acc.v"
+    - "l1_horner_cnt.v"
+    - "l1_acc_shadow.v"
+    - "l1_acc_shadow_cg.v"
+    - "checkpoint_ctrl.v"
+    - "requant_rom_x4.v"
+    - "l2_weight_rom_x4.v"
+    - "config_latch.v"
+    - "requant_unit.v"
+    - "l2_mac_x4.v"
+    - "max2_node.v"
+    - "exit_tree_2stage.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).

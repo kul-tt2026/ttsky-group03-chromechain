@@ -65,7 +65,7 @@
 // width every time the golden vectors are regenerated -- so the margin is re-checked by
 // the gate, not argued. v1 was 12. Worth -0.234 t@70% at chip level, and it is the lever
 // the ledger calls guarantee-load-bearing: see "WHICH BUILD IS THIS" above.
-`define ACC_W   11          // L1 hidden accumulator (Horner). Was 12 in v1.
+`define ACC_W   10          // L1 hidden accumulator (Horner). Was 12 in v1.
 `define OACC_W  12          // L2 out-ACC; a2 worst case +-408 -> 10 b needed
 `define H_W     4           // hidden activation, unsigned [0,15] (QMAX=15)
 `define K_W     2           // requant shift; FINAL4 k in {0,1,2}, bincount [2,28,2]

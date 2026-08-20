@@ -1,0 +1,47 @@
+{
+  // Chrome Chain hand-write tasks.
+  //
+  // Cmd+Shift+B runs the gate for whichever .v file is open. The gate itself (the
+  // testbenches and the golden vectors) lives in the Chrome Chain design repo, so
+  // these tasks call its ./scripts/hw by absolute path -- that script cd's itself,
+  // so it works no matter which folder VS Code has open.
+  "version": "2.0.0",
+  "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+  "problemMatcher": [],
+  "tasks": [
+    {
+      "label": "hw: test THIS module",
+      "type": "shell",
+      "command": "'/Users/florispenninckx/Documents/Projects/Chrome Chain/scripts/hw' test ${fileBasenameNoExtension}",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": {
+        "owner": "verilog",
+        "fileLocation": ["autoDetect", "/Users/florispenninckx/Documents/Projects/Chrome Chain"],
+        "pattern": {
+          "regexp": "^\\s*(.+\\.vh?):(\\d+):\\s*((?:error|warning|syntax error).*)$",
+          "file": 1, "line": 2, "message": 3
+        }
+      }
+    },
+    {
+      "label": "hw: smoke 200 (whole chip, ~12 s)",
+      "type": "shell",
+      "command": "'/Users/florispenninckx/Documents/Projects/Chrome Chain/scripts/hw' smoke 200"
+    },
+    {
+      "label": "hw: diff THIS module vs reference",
+      "type": "shell",
+      "command": "'/Users/florispenninckx/Documents/Projects/Chrome Chain/scripts/hw' diff ${fileBasenameNoExtension}"
+    },
+    {
+      "label": "hw: status",
+      "type": "shell",
+      "command": "'/Users/florispenninckx/Documents/Projects/Chrome Chain/scripts/hw' status"
+    },
+    {
+      "label": "hw: FULL GATE (27 min)",
+      "type": "shell",
+      "command": "'/Users/florispenninckx/Documents/Projects/Chrome Chain/scripts/hw' gate"
+    }
+  ]
+}
