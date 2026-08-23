@@ -1,21 +1,51 @@
 # SPDX-FileCopyrightText: © 2024 Tiny Tapeout
 # SPDX-License-Identifier: Apache-2.0
+#
+# Chrome Chain smoke test.
+#
+# SCOPE, stated so nobody mistakes this for the verification. The real gate is
+# `python3 l2_synthesis/verify.py` in the design repo: 65 checks, including a
+# 10,000-image end-to-end replay of both plane orderings and both modes against a
+# cycle-accurate model, reproducing every aggregate exactly. That needs the MNIST-derived
+# vectors, which are megabytes and do not belong in a Tiny Tapeout submission.
+#
+# What this file does is what the TT flow actually needs: prove the wrapper elaborates,
+# resets cleanly, honours the K12 gate, and accepts a config blob. Those are the four
+# things that would make the returned silicon un-debuggable if they were wrong, and they
+# are cheap to check here.
+#
+# Pin mapping is tt_um_kul_chromechain.v's:
+#   ui_in[7:0]   shared data bus -- pixel beats and config words
+#   uio_in[0] ld_en   [1] ld_vstrobe  [2] cfg_mode  [3] cfg_stb  [4] start  [6:5] dft_sel
+#   uo_out view 0 (dft_sel=0): {err_any, busy, ld_ready, done, answer[3:0]}
+#   uo_out view 2 (dft_sel=2): {blob_loaded, ld_done, ld_idx[1:0], 1'b0, exit_k[2:0]}
+
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge, with_timeout
-from cocotb.result import SimTimeoutError
+from cocotb.triggers import ClockCycles
+
+CFG_WORDS = 6  # v1.1 blob; v1 is 16. ckpt_defs.vh "WHICH BUILD IS THIS" is the authority.
+
+LD_EN, LD_VSTB, CFG_MODE, CFG_STB, START = 0, 1, 2, 3, 4
+DFT_SHIFT = 5
+
+
+def ctrl(**bits):
+    """Build uio_in from named control bits, with dft_sel in [6:5]."""
+    v = bits.pop("dft", 0) << DFT_SHIFT
+    for name, pos in (("ld_en", LD_EN), ("ld_vstb", LD_VSTB), ("cfg_mode", CFG_MODE),
+                      ("cfg_stb", CFG_STB), ("start", START)):
+        if bits.get(name):
+            v |= 1 << pos
+    return v
 
 
 @cocotb.test()
-async def test_project(dut):
-    dut._log.info("Start")
+async def test_reset_and_k12(dut):
+    """After reset the chip is idle, and `start` before a blob is loaded does nothing."""
+    dut._log.info("Chrome Chain -- reset and K12 gate")
+    cocotb.start_soon(Clock(dut.clk, 10, unit="us").start())
 
-    # 100 kHz klok
-    clock = Clock(dut.clk, 10, unit="us")
-    cocotb.start_soon(clock.start())
-
-    # Reset
-    dut._log.info("Reset")
     dut.ena.value = 1
     dut.ui_in.value = 0
     dut.uio_in.value = 0
@@ -24,51 +54,56 @@ async def test_project(dut):
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 2)
 
-    # --- Start een nieuwe classificatie ---
-    dut._log.info("Pulse start")
-    dut.ui_in.value = 0b00000001   # start = ui_in[0]
+    uo = int(dut.uo_out.value)
+    assert (uo >> 7) & 1 == 0, f"a sticky alarm is set straight out of reset (uo_out={uo:#04x})"
+    assert (uo >> 6) & 1 == 0, f"busy is high with no image started (uo_out={uo:#04x})"
+    assert (uo >> 4) & 1 == 0, f"done is high before anything ran (uo_out={uo:#04x})"
+
+    # K12: start must be ignored until the blob has been loaded. tb_cc_top proves the
+    # same property in the design repo; this is the version that runs in TT's CI.
+    dut.uio_in.value = ctrl(start=1)
     await ClockCycles(dut.clk, 1)
+    dut.uio_in.value = 0
+    await ClockCycles(dut.clk, 8)
+
+    uo = int(dut.uo_out.value)
+    assert (uo >> 6) & 1 == 0, "K12 violated: start before blob_loaded began an image"
+    assert (uo >> 7) & 1 == 0, "an alarm fired on an ignored start"
+
+
+@cocotb.test()
+async def test_config_load(dut):
+    """The blob loader accepts CFG_WORDS bytes and raises blob_loaded, with no alarm."""
+    dut._log.info("Chrome Chain -- config blob load")
+    cocotb.start_soon(Clock(dut.clk, 10, unit="us").start())
+
+    dut.ena.value = 1
     dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
     await ClockCycles(dut.clk, 2)
 
-    # --- Stuur 16 windows, elk met minstens één non-zero pixel ---
-    # window_in = {uio_in, ui_in} (16 bits), window_valid = ui_in[1]
-    # We gebruiken simpele, gegarandeerd non-zero testdata per window.
-    for window_idx in range(16):
-        # elk window krijgt een klein, uniek, gegarandeerd non-zero patroon
-        pixel_data = (0x1111 + window_idx) & 0xFFFF
+    # blob_loaded lives in view 2, bit 7.
+    dut.uio_in.value = ctrl(dft=2)
+    await ClockCycles(dut.clk, 1)
+    assert (int(dut.uo_out.value) >> 7) & 1 == 0, "blob_loaded high before any load"
 
-        uio_val = (pixel_data >> 8) & 0xFF
-        ui_val_data = pixel_data & 0xFF
-
-        dut.uio_in.value = uio_val
-        # ui_in[1] (window_valid) hoog zetten, data staat op de rest van ui_in
-        dut.ui_in.value = (ui_val_data & 0b11111100) | 0b10
-
-        dut._log.info(f"Window {window_idx}: pixel_data=0x{pixel_data:04x}")
+    # One strobe per word; the loader owns the address, the host only counts.
+    for word in range(CFG_WORDS):
+        dut.ui_in.value = word          # content is irrelevant to this test
+        dut.uio_in.value = ctrl(cfg_mode=1, cfg_stb=1)
+        await ClockCycles(dut.clk, 1)
+        dut.uio_in.value = ctrl(cfg_mode=1)
         await ClockCycles(dut.clk, 1)
 
-        # window_valid weer laag
-        dut.ui_in.value = ui_val_data & 0b11111100
-        dut.uio_in.value = 0
+    dut.uio_in.value = ctrl(dft=2)
+    await ClockCycles(dut.clk, 2)
+    uo = int(dut.uo_out.value)
+    assert (uo >> 7) & 1 == 1, f"blob_loaded low after {CFG_WORDS} words (uo_out={uo:#04x})"
 
-        # Ruime marge geven aan de scan/accumulate-fase voordat het volgende window komt
-        # (zonder zichtbare window_req moeten we hier gokken/ruim inschatten)
-        await ClockCycles(dut.clk, 50)
-
-    # --- Wacht op result_valid (bit 4 van uo_out volgens huidige mapping) ---
-    dut._log.info("Waiting for result_valid...")
-
-    timeout_cycles = 2000
-    for i in range(timeout_cycles):
-        await ClockCycles(dut.clk, 1)
-        uo = dut.uo_out.value
-        result_valid = (int(uo) >> 4) & 0x1
-        if result_valid:
-            result = int(uo) & 0xF
-            dut._log.info(f"result_valid=1 na {i} extra cycles, result={result}")
-            break
-    else:
-        assert False, f"result_valid werd niet hoog binnen {timeout_cycles} cycles — pipeline lijkt vast te lopen"
-
-    dut._log.info("Test compleet: pipeline liep van start tot result_valid zonder vast te lopen.")
+    dut.uio_in.value = ctrl(dft=3)      # view 3 = the five sticky alarms, individually
+    await ClockCycles(dut.clk, 1)
+    alarms = int(dut.uo_out.value) & 0x1F
+    assert alarms == 0, f"alarms set after a well-formed blob load: {alarms:#04x}"
