@@ -6,6 +6,9 @@ SIM             ?= icarus
 FST             ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG   ?= verilog
 SRC_DIR          = $(PWD)/../src
+# MUST stay identical to info.yaml's source_files. Letting the two drift is a standard
+# TT trap: the GDS builds from info.yaml and the tests build from here, so a file listed
+# in one and not the other means the thing you simulated is not the thing you taped out.
 PROJECT_SOURCES  = tt_um_kul_chromechain.v \
                    cc_top.v \
                    top_fsm.v \
@@ -32,6 +35,11 @@ ifneq ($(GATES),yes)
 
 # RTL simulation:
 SIM_BUILD        = sim_build/rtl
+# ckpt_defs.vh is `include'd by most of the sources. iverilog does not search the
+# including file's own directory, so without this the RTL build dies in the
+# preprocessor on a clean checkout. yosys resolves the include itself, which is why
+# the GDS flow never needed it.
+COMPILE_ARGS    += -I$(SRC_DIR)
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
 
 else
