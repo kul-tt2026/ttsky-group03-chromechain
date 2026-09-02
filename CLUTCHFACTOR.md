@@ -253,7 +253,7 @@ the first push of the branch rebuilds the GDS and redeploys the viewer for that 
 
 ```bash
 cd ~/Documents/Projects/ttsky-clutchfactor
-git log --oneline origin/main..HEAD          # 15 commits, read them
+git log --oneline origin/main..HEAD          # 16 commits, read them all
 git diff origin/main --stat
 cd equiv && ./get_base.sh && ./run_diff.sh && ./formal.sh; cd ..   # ~5 min, reproduces the gate
 ```
