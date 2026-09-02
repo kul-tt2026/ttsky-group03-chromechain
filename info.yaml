@@ -6,13 +6,13 @@ project:
   description:  "Ternary bit-serial MNIST classifier with a distribution-free conformal early exit"
   language:     "Verilog"
 
-  # 10 MHz for bring-up, NOT the ceiling. The synthesis flow reports a 27.0 ns critical
-  # path for the wrapped top (abc, sky130 tt_025C_1v80, pre-P&R) -- about 37 MHz -- and
-  # that path is the whole pixel chain in one cycle: plane buffer -> popcount -> pixel
-  # scanner -> W1 ROM -> 32 MAC lanes -> accumulator. The individual blocks are all fast
-  # (exit_tree_2stage 8.6 ns, l1_horner_acc 7.2 ns); the composition is not. Every claim
-  # this design makes is about CYCLES, which do not depend on the clock, so running
-  # slower costs the design nothing. Raise this only after real STA post-P&R.
+  # 10 MHz for bring-up, NOT the ceiling. The critical path is about 27 ns pre-P&R
+  # (roughly 37 MHz): the whole pixel chain in one cycle, plane buffer -> popcount ->
+  # pixel scanner -> W1 ROM -> 32 MAC lanes -> accumulator. Every claim this design
+  # makes is about CYCLES, which do not depend on the clock, so running slower costs
+  # the design nothing. src/config.json's CLOCK_PERIOD (100 ns) matches this value so
+  # the hardening flow does not spend timing-repair buffers on a 50 MHz target the
+  # chip is not asked to meet. Raise this only after real STA post-P&R.
   clock_hz:     10000000
 
   # 4x2. Post-P&R on the green run: 71.3% utilisation of the 149,183 um2 4x2 core,
