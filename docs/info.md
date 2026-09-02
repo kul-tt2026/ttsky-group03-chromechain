@@ -111,7 +111,10 @@ difference is the entire point of the design.
 | 3 | the five sticky alarms, individually |
 
 The cocotb tests in `test/` cover reset behaviour, the interlock that ignores `START`
-before a blob is loaded, and a full config blob load.
+before a blob is loaded, a full config blob load, a load aborted and restarted, and
+three fixed images run end to end through the pins (an early exit at checkpoint 2, a
+full four-plane run, and the same image with zero-skip), plus the `SCAN_BUSY` drain
+and the `N_cap` alarm.
 
 ## External hardware
 
