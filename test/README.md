@@ -5,8 +5,7 @@ For more information, check the [Tiny Tapeout website](https://tinytapeout.com/h
 
 ## Setting Up
 
-1. Edit the [Makefile](Makefile) and modify `PROJECT_SOURCES` to point to your Verilog files.
-2. Edit [tb.v](tb.v) and replace `tt_um_example` with your module name.
+`PROJECT_SOURCES` in the [Makefile](Makefile) lists the 21 RTL files and must stay identical to `source_files` in `../info.yaml`. [tb.v](tb.v) instantiates `tt_um_kul_chromechain`; the tests in [test.py](test.py) drive only the TT pins. cocotb 2.0.1 needs Python 3.12 or 3.13.
 
 ## Running Simulations
 
@@ -18,7 +17,7 @@ make
 
 ### Gate-Level Simulation
 
-First, harden your project and copy `../runs/wokwi/results/final/verilog/gl/{your_module_name}.v` to `gate_level_netlist.v`. Then run:
+First, harden your project (`make harden` at the repo root), then `make test_gates` there: it copies `runs/wokwi/final/pnl/tt_um_kul_chromechain.pnl.v` to `test/gate_level_netlist.v` and runs:
 
 ```sh
 make GATES=yes
