@@ -3,7 +3,7 @@
 # prints the liberty-priced stat. LIB defaults to the copy in the Chrome Chain project;
 # any sky130_fd_sc_hd liberty works, the point is the SAME liberty for both trees.
 # Low-power/isolation cells are excluded as the real flow excludes them.
-#   usage: ./synth.sh <src_dir> <out.log>
+#   usage: ./synth.sh <src_dir> <out.log>        [ABC_D=<ps>] adds an abc delay target
 set -u
 SRC="${1:?src dir}"
 LOG="${2:?log}"
@@ -19,7 +19,7 @@ read_verilog -DSYNTHESIS -I $SRC $f
 hierarchy -check -top tt_um_kul_chromechain
 synth -top tt_um_kul_chromechain -flatten
 dfflibmap -liberty \"$LIB\" $DU
-abc -liberty \"$LIB\" $DU
+abc -liberty \"$LIB\" $DU ${ABC_D:+-D $ABC_D}
 opt_clean -purge
 stat -liberty \"$LIB\"
 " >/dev/null 2>&1
