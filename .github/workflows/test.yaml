@@ -3,6 +3,7 @@ name: test
 on:
   push:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   test:
@@ -29,8 +30,12 @@ jobs:
         run: |
           cd test
           make
-          # make will return success even if the test fails, so check for failure in the results.xml
+          # make returns success even when a test fails, and produces no results.xml
+          # at all when an elaboration assertion calls $finish at time 0. Both must
+          # fail the job: require the file, then require it to be failure-free.
+          test -f results.xml
           ! grep '<failure' results.xml
+          grep -q '<testcase' results.xml
 
       - name: Test Summary
         uses: test-summary/action@v2
