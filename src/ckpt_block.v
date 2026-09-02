@@ -28,8 +28,7 @@ endmodule
 
 module ckpt_block #(
     parameter ACC_CNT = `ACC_CNT_DEFAULT,   // 1 = carry-chain accumulator (l1_horner_cnt)
-    // L1 accumulator width. `ACC_W = 12; W = 11 is the DESIGN_LEDGER Aug-1 floor, priced
-    // through run_synth.py's PARAM_OVERRIDES exactly as l1_horner_acc/l1_acc_shadow are.
+    // L1 accumulator width, `ACC_W = 10: the reachable range is -480..+420.
     parameter W             = `ACC_W,
     // 1 = l1_acc_shadow_cg (one integrated clock gate), 0 = l1_acc_shadow (384 enables).
     parameter SHADOW_CG     = 1,
@@ -47,7 +46,7 @@ module ckpt_block #(
     // works for a synthesis probe and is unreachable from iverilog -- and an area number
     // for a configuration nobody simulated is worthless (tb_cc_top.v's own words). The
     // loader that fills this latch is parameterised in lockstep one level up; see
-    // blob_loader.v's "NWORDS IS A CONTRACT".
+    // blob_loader.v's header.
     parameter CFG_NWORDS = `CFG_WORDS,
     parameter CFG_ADDRW  = `CFG_ADDR_W,
     // SYNTHESIS PROBE, NEVER A SHIPPING BUILD. 1 ties `ckpt_en` to 0 at elaboration, so
@@ -260,10 +259,10 @@ module ckpt_block #(
 
             // I2. Both widen by SIGN extension (signed-to-signed assignment) and the
             // shift is ARITHMETIC, matching numpy's floor semantics in
-            // engine.py:true_score_at -- `s = PLANES - k_planes; bias >> s`. 24 of the
-            // 32 FINAL4 bias values are negative, so a logical shift here is not a
-            // subtle error, but it is a silent one: it compiles and every checkpoint
-            // margin comes out wrong, which makes the frozen T2/T3 meaningless.
+            // engine.py:true_score_at -- `s = PLANES - k_planes; bias >> s`. 8 of the
+            // 32 FINAL4 bias values are negative, so a logical shift here is a silent
+            // error: it compiles and every checkpoint margin on those units comes out
+            // wrong, which makes the frozen T2/T3 meaningless.
             wire signed [`BIAS_W-1:0] bias_ext = $signed(bias_raw);
             wire signed [`BIAS_W-1:0] bias_shf = bias_ext >>> bias_sh;
             wire signed [`BIAS_W-1:0] a1_ext   = $signed(a1_raw);

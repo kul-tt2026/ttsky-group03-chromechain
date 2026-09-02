@@ -4,7 +4,7 @@
 `include "ckpt_defs.vh"
 
 // ---------------------------------------------------------------- THE v1.1 LEVERS
-// Four area levers, all of them parameters and all of them defaulting to v1. W and
+// Four area levers, all of them parameters, all defaulting to the v1.1 values. W and
 // OACC_CG were already here; ACC_CNT and the config-latch geometry are added so a
 // TESTBENCH can reach them, not only `chparam`. run_synth.py could always poke a nested
 // parameter (`chparam -set NWORDS 6 config_latch`), but iverilog cannot -- so lever 3 and
@@ -14,7 +14,7 @@
 // CFG_NWORDS/CFG_ADDRW drive config_latch AND blob_loader from one pair. They are not two
 // independent knobs: the loader owns the word counter and the address, so a 48 b latch
 // behind a 16-word loader wraps words 8..15 onto 0..5 and zeroes the thresholds without
-// raising blob_err. See blob_loader.v's "NWORDS IS A CONTRACT".
+// raising blob_err. See blob_loader.v's header.
 // Every default comes from ckpt_defs.vh, so "which build is this" is one question with one
 // answer in one file. v1 is this module with W=12, OACC_CG=0, ACC_CNT=0, CFG_NWORDS=16,
 // CFG_ADDRW=4 -- see ckpt_defs.vh's "WHICH BUILD IS THIS".
@@ -47,7 +47,12 @@ module cc_top #(
     input  wire                   cfg_mode,     // held high for the whole load
     input  wire                   cfg_stb,      // one pulse per word
     input  wire [`CFG_W-1:0]      cfg_din,
-    output wire [`CFG_W-1:0]      cfg_rd_data,  // readback: march test + DFT scan-out
+    output wire [`CFG_W-1:0]      cfg_rd_data,  // the latch word at the loader's write
+                                                // address. That address parks at 6 after a
+                                                // complete load, outside the 48 b latch, so
+                                                // DFT view 1 is undefined after a load and
+                                                // shows the word about to be overwritten
+                                                // mid-load. There is no host read address.
     output wire                   blob_loaded,  // K12
 
     // ---- result
@@ -71,7 +76,8 @@ module cc_top #(
     wire [CFG_ADDRW-1:0]   cfg_addr;
     wire [`CFG_W-1:0]      cfg_wr_data;
 
-    wire                   page_sel;
+    wire                   page_sel;     // decoded from the blob; drives nothing
+                                         // (the page-2 mux below is commented out)
     wire [`N_CAP_W-1:0]    n_cap;
 
     wire                   img_start, swap, scan_start;
@@ -80,7 +86,9 @@ module cc_top #(
     wire [1:0]             plane_idx;
 
     wire                   y_valid, dec_valid, exit_strobe, ckpt_busy;
-    wire [2:0]             chk_idx, exit_k_held;
+    wire [2:0]             chk_idx, exit_k_held;   // exit_k_held is unused: the pins
+                                                    // show the live exit_k, which holds
+                                                    // because chk_k is never cleared
     wire [3:0]             blk_answer;
     wire                   blk_ans_valid;
     wire [`OACC_BUS-1:0]   y;

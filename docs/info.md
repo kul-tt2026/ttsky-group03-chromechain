@@ -25,7 +25,7 @@ read ports.
 
 Each pixel is 4 bits, so an image is four bitplanes presented MSB-first. The L1
 accumulator folds them with Horner's rule — `acc = 2*acc + plane_k` — so no plane needs a
-multiplier and the hidden accumulator stays 11 bits wide. Pixels are scanned one per
+multiplier and the hidden accumulator stays 10 bits wide. Pixels are scanned one per
 cycle, and a zero-skip mode can shorten a plane to its populated pixels.
 
 ### The early exit
@@ -48,6 +48,10 @@ A 6-byte blob (48 bits, 43 in use) is shifted in before the first image and hold
 10-bit thresholds, per-checkpoint arm bits, per-plane inversion, the zero-skip enable, a
 weight-page select, a per-plane valid-strobe enable, and `N_cap` — the maximum number of
 planes to run. By default checkpoints 2 and 3 are armed and checkpoint 1 is disarmed.
+Leave `N_cap` at 4: the checkpoint controller always waits for the fourth plane
+boundary, so a cap of 1, 2 or 3 leaves `BUSY` high forever with no alarm and no `DONE`,
+and only a reset recovers. Values 0 and 5–7 are clamped to 4 and raise the `N_cap`
+alarm.
 
 Until the blob is loaded, `START` is ignored. A chip that classified with reset-value
 thresholds would be silently wrong; this makes it visibly stalled instead.
@@ -65,20 +69,30 @@ All control lives on the bidirectional pins. `ui_in[7:0]` is the only wide data 
 carries both config words and pixel beats — never at the same time.
 
 **1. Reset.** Hold `rst_n` low for a few cycles. With `DFT_SEL = 0`, `uo_out` reads back
-all zeros: no `BUSY`, no `DONE`, no `ERR`.
+`0x20`: `LD_READY` (uo[5]) is high because the fill buffer is empty, and `BUSY`, `DONE`
+and `ERR` are all low.
 
 **2. Load the config blob.** Raise `CFG_MODE` (uio[2]) and pulse `CFG_STB` (uio[3]) once
 per byte with the byte on `ui_in[7:0]`. Six bytes. The loader owns the address counter, so
 the host only has to count strobes. Then set `DFT_SEL = 2` and check that `uo_out[7]`
 (`blob_loaded`) has gone high, and `DFT_SEL = 3` to confirm all five alarm bits are clear.
 
-**3. Feed an image.** Raise `LD_EN` (uio[0]) and present the image 8 bits per cycle: 8
-beats per bitplane, 4 planes, MSB plane first. `LD_READY` (uo[5]) indicates the buffer
-will accept a beat. If the per-plane valid strobe is enabled in the blob, pulse
-`LD_VSTROBE` (uio[1]) at each plane boundary.
+**3. Start the image.** Pulse `START` (uio[4]) for one cycle, then leave `LD_EN` low for
+one more cycle. `BUSY` (uo[6]) goes high. The order matters: `START` clears the fill
+buffer, so a plane loaded before `START` is discarded, and an image buffered entirely
+before `START` hangs the chip.
 
-**4. Run.** Pulse `START` (uio[4]). `BUSY` (uo[6]) goes high, and when the answer is ready
-`DONE` (uo[4]) pulses with the predicted class on `uo_out[3:0]` as a value from 0 to 9.
+**4. Feed the image.** Raise `LD_EN` (uio[0]) and present the image 8 bits per cycle: 8
+beats per bitplane, 4 planes, MSB plane first, one beat per cycle only while `LD_READY`
+(uo[5]) is high. If the per-plane valid strobe is enabled in the blob, pulse
+`LD_VSTROBE` (uio[1]) with the last beat of each plane. When the answer is ready `DONE`
+(uo[4]) pulses for one cycle with the predicted class on `uo_out[3:0]` as a value from 0
+to 9, and `BUSY` falls.
+
+The pixel scanner has no abort, so after an early exit it keeps running the plane it is
+on for up to 52 cycles after `BUSY` falls. Wait that long before the next `START`, or
+the next image's first plane is scanned before it is loaded and the scanner alarm
+latches.
 
 **5. See where it exited.** With `DFT_SEL = 2`, `uo_out[2:0]` carries `exit_k` — the plane
 the decision was taken on. On easy digits this is 1 or 2 rather than 4, and that
@@ -91,7 +105,7 @@ difference is the entire point of the design.
 | `DFT_SEL` | `uo_out[7:0]` |
 |---|---|
 | 0 | `{ERR, BUSY, LD_READY, DONE, ANSWER[3:0]}` — the operating view |
-| 1 | config readback, for a march test or scan-out of the loaded blob |
+| 1 | the config word at the loader's address: the word about to be written mid-load, undefined after a complete load |
 | 2 | `{blob_loaded, ld_done, ld_idx[1:0], 0, exit_k[2:0]}` |
 | 3 | the five sticky alarms, individually |
 

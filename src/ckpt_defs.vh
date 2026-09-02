@@ -15,7 +15,7 @@
 // modes, every engine.py aggregate reproduced -- l2_synthesis/results.md, "v1.1 -- the
 // four area levers". 5.547 t@70% wrapped, against v1's 6.238 t.
 //
-//   lever 1  `ACC_W       12 -> 11      L1 accumulator width
+//   lever 1  `ACC_W       12 -> 10      L1 accumulator width
 //   lever 2  `OACC_CG_DEF  0 ->  1      out-ACC behind one dlclkp_1
 //   lever 3  `CFG_WORDS   16 ->  6      config latch 128 -> 48 b, AND the blob that
 //            `CFG_ADDR_W   4 ->  3      fills it -- these two move together or the load
@@ -38,9 +38,10 @@
 //   - The blob contract is 48 b / 6 host words, not 128 b / 16. The 43 b payload fits;
 //     the 85 b page-2 reserve is spent, and there is no page 2 to want it back.
 //     RATIFIED, DESIGN_LEDGER blocking item 5. A blob is six ui_in writes, ~25 us.
-//   - `ACC_W = 11 holds +-1023 against the page-1 bound of 690, a 33% margin, and
-//     dump_{a1,l1}_vectors.py re-assert that fit on every regeneration. The <=68 row-norm
-//     caveat that made this guarantee-load-bearing was page-2's. RATIFIED, item 2.
+//   - `ACC_W = 10 holds -512..+511 against the reachable range -480..+420 (decoded
+//     from w1_rom_final4: at most 28 +1 weights and 32 -1 weights per hidden unit,
+//     pixels unsigned 4 b). The 690 figure quoted elsewhere is 15 x the max row L1
+//     norm, which mixes + and - weights and is unreachable with unsigned inputs.
 //
 // So v1.1 is not a candidate any more, it is the design. v1 stays buildable and gated
 // because a frozen build nobody runs stops elaborating -- not because it is coming back.
@@ -55,16 +56,14 @@
 `define PLANES  4           // 4-bit input, MSB-first, plane-major Horner
 
 // ---------------------------------------------------------------- datapath widths
-// a1 worst case +-690 -> 11 b signed floor; 9 b is KILLED (wraps at +-719 on OOD
-// inputs and silently voids the conformal guarantee). figures/datapath.dot labels the
-// bank "32 x 12 b ACC (DFF, 384 b)" and is now one build behind;
-// ternary_tapeout/eightbit/audit_final.json is the range source.
-//
-// v1.1 LEVER 1: this is the ledger floor, taken. 11 b signed holds +-1023 against the
-// page-1 bound of 690, and checkpoint_sim/dump_{a1,l1}_vectors.py assert that fit at THIS
-// width every time the golden vectors are regenerated -- so the margin is re-checked by
-// the gate, not argued. v1 was 12. Worth -0.234 t@70% at chip level, and it is the lever
-// the ledger calls guarantee-load-bearing: see "WHICH BUILD IS THIS" above.
+// a1 reachable range is -480..+420 (w1_rom_final4 decoded: max 28 +1 and 32 -1
+// weights in any hidden unit, unsigned 4 b pixels), so 10 b signed (-512..+511)
+// holds it with 32 to spare. The "+-690" bound quoted in older notes is 15 x the max
+// row L1 norm, mixes + and - weights, and cannot be reached with unsigned inputs.
+// 9 b would wrap on out-of-distribution inputs and silently void the conformal
+// guarantee. requant_unit.v adds the shifted bias in a 10 b intermediate: worst case
+// -480 + (-12) = -492 against a floor of -512, 20 counts of headroom, the tightest
+// number in the chip.
 `define ACC_W   10          // L1 hidden accumulator (Horner). Was 12 in v1.
 `define OACC_W  12          // L2 out-ACC; a2 worst case +-408 -> 10 b needed
 `define H_W     4           // hidden activation, unsigned [0,15] (QMAX=15)
@@ -73,7 +72,7 @@
 `define T_W     10          // threshold field; observed margins m1<=12 m2<=28 m3<=61
 
 // derived
-`define ACC_BUS   (`NHID   * `ACC_W)      // 384 b at ACC_W=12 -- the A1 snapshot size
+`define ACC_BUS   (`NHID   * `ACC_W)      // 320 b at ACC_W=10 -- the A1 snapshot size
 `define OACC_BUS  (`NCLASS * `OACC_W)     // 120 b
 `define W2_ROW_W  (`NCLASS * 2)           // 20 b: {p,n} ternary pair per class
 
@@ -146,7 +145,7 @@
 // word counter and the address, so a 48 b latch behind a 16-word loader wraps words 8..15
 // back onto 0..5, zeroes every threshold and does NOT raise blob_err -- a silently wrong
 // chip from a load that reports success. cc_top drives both from one parameter pair
-// (CFG_NWORDS/CFG_ADDRW); see blob_loader.v's "NWORDS IS A CONTRACT".
+// (CFG_NWORDS/CFG_ADDRW); see blob_loader.v's header.
 `define CFG_W        8             // latch word width
 `define CFG_WORDS    6             // 6 x 8 = 48 b. Was 16 (128 b) in v1.
 `define CFG_ADDR_W   3             // 2^3 = 8 >= CFG_WORDS. Was 4 in v1.
@@ -177,7 +176,7 @@
 `define CFG_INV_LSB  35            // K10 per-plane inversion, `PLANES = 4 b
 `define CFG_NCAP_LSB 39            // N_cap, `N_CAP_W = 3 b
 `define CFG_VST_LSB  42            // K11 per-plane valid-strobe enable, 1 b
-`define CFG_BITS     43            // payload bits in use; [127:43] spare
+`define CFG_BITS     43            // payload bits in use; [47:43] spare
 
 // Reset defaults for the non-threshold fields. The T defaults are T{1,2,3}_DEFAULT
 // above (frozen_thresholds.json "P2P3|B1B2A1|1e-3"). These four are NOT set by that

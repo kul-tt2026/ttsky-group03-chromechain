@@ -63,9 +63,8 @@ module tt_um_kul_chromechain (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
 
-    // ans_valid is `done` one layer down; both are exposed (done on a pin, ans_valid
-    // through the same wire) so listing it here keeps the linter quiet about neither
-    // being unused nor duplicated.
+    // ans_valid has no pin. DONE (uo_out[4]) is top_fsm's registered copy of it, one
+    // cycle later. It is listed here only so the linter does not report it unused.
     wire _unused = &{ena, ans_valid, uio_in[7], 1'b0};
 
 endmodule
