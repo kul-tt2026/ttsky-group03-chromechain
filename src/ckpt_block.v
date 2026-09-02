@@ -356,11 +356,19 @@ module ckpt_block #(
                      `P);
             $finish;
         end
-        // requant_unit's a1/bias ports are 12 b; a wider ACC would be truncated by the
-        // signed assignment above without a warning.
+        // requant_unit's a1/bias ports are `BIAS_W = 12 b, but its intermediate sum
+        // t = a1 + bias is 10 b: the 12 b add is truncated to 10 b on assignment. The
+        // port guard alone would let an ACC wider than 10 b elaborate and then wrap
+        // silently inside requant_unit, so guard the intermediate width too. At W = 10
+        // the worst case is -480 + (-12) = -492 against a floor of -512.
         if (W > `BIAS_W) begin
             $display("ckpt_block: FAIL W = %0d does not fit requant_unit's %0d b ports",
                      W, `BIAS_W);
+            $finish;
+        end
+        if (W > 10) begin
+            $display("ckpt_block: FAIL W = %0d exceeds requant_unit's 10 b intermediate t",
+                     W);
             $finish;
         end
     end
