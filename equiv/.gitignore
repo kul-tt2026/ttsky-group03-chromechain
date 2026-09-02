@@ -1,0 +1,5 @@
+base_src/
+.base_tmp/
+out/
+*.vvp
+*.txt.log
