@@ -1,24 +1,21 @@
-// checkpoint_ctrl -- the arbiter. Decides WHEN each conformal-exit check runs and drives
-// the shared datapath through it. GAMMA = 11 cycles per check: 8 (requantise 4 units || L2
-// accumulate 4) + 2 (tree) + 1 (decide). The datapath never stalls for a check -- plane k+1
-// keeps accumulating underneath, which is what the A1 snapshot bank exists for.
-//   sgn is tied 0 (I1). bias is shifted per checkpoint, arithmetic (I2).
-//   The out-ACC is preloaded with b2, never zero (I3).
-// Success is measured in cycle NUMBERS, against engine.py's boundary_cycles().
+// checkpoint_ctrl -- decides when each conformal-exit check runs and sequences the shared
+// checkpoint datapath through it. One check is `GAMMA = 11 cycles: 8 read cycles (4 hidden
+// units requantised and L2-accumulated per cycle), 1 to present y, 2 in the exit tree. The
+// L1 datapath never stalls: the shadow bank snapshots the accumulator at each boundary.
 `include "ckpt_defs.vh"
 
 module checkpoint_ctrl (
     input  wire                          clk,
     input  wire                          rst,          // synchronous, active high
 
-    // ---- from the L1 build controller. Neither of these is ever back-pressured:
-    // the datapath does not stall for a check, which is the point of A1.
+    // ---- from top_fsm (img_start) and active_pixel_scan (plane_end). Neither is ever
+    // back-pressured: the datapath does not stall for a check; the shadow bank snapshots it.
     input  wire                          img_start,    // 1-cycle pulse before plane 1
     input  wire                          plane_end,    // pulse DURING the last
                                                        // accumulate cycle of a plane
 
-    // ---- from the theta/T/config latch
-    input  wire [`PLANES-2:0]            ckpt_en,      // K7: bit0=P1, bit1=P2, bit2=P3
+    // ---- from config_latch
+    input  wire [`PLANES-2:0]            ckpt_en,      // arm bits: bit0=P1, bit1=P2, bit2=P3
     input  wire [(3*`T_W)-1:0]           t_cfg,        // {T3,T2,T1}, `T_W each
 
     // ---- from exit_tree_2stage
@@ -33,34 +30,38 @@ module checkpoint_ctrl (
     output wire [(`P*`CKPT_ADDR_W)-1:0]  rom_addr,
 
     // ---- to the `P requant_unit lanes
-    output wire                          sgn,          // I1
-    output wire [1:0]                    bias_sh,      // I2
+    output wire                          sgn,          // negate flag; tied 0 here
+    output wire [1:0]                    bias_sh,      // bias >>> amount, `PLANES - k
 
     // ---- to the out-ACC register in front of exit_tree_2stage
-    output wire [`OACC_BUS-1:0]          oacc_init,    // I3: b2
+    output wire [`OACC_BUS-1:0]          oacc_init,    // b2, the L2 bias preload
     output wire                          oacc_sel_init,// select oacc_init, not feedback
     output wire                          oacc_en,
 
     // ---- to exit_tree_2stage
-    output wire                          y_valid,      // I4: T_sel valid on this cycle
+    output wire                          y_valid,      // y presented, t_sel valid
     output wire [`T_W-1:0]               t_sel,
 
     // ---- decision
-    output wire                          dec_valid,    // == boundary_cycles()'s `dec`
+    output wire                          dec_valid,    // decide cycle: chk_cnt == DEC_CYC
     output wire                          exit_strobe,
     output wire [2:0]                    exit_k,       // 0 = final answer, else 1..3
     output wire [2:0]                    chk_idx,      // in-flight check, 1..`PLANES
     output wire                          busy,
     output reg  [3:0]                    answer,
-    output reg  [2:0]                    exit_k_held,  // registered companion to answer
-    output reg                           ans_valid,
+    output reg  [2:0]                    exit_k_held,  // registered companion to answer;
+                                                       // wired in cc_top, not consumed
+    output reg                           ans_valid,    // 1-cycle pulse with answer
     output reg                           sched_err     // sticky; must never fire
 );
-    // Derived purely from ckpt_defs.vh -- no width or latency is restated. Sized, so
-    // they can be compared against the state registers without a part-select.
+    // Derived from ckpt_defs.vh. Sized to match the state registers so they compare
+    // without a part-select.
     localparam [3:0] RD_CYC  = `NHID / `P;                        // 8  read cycles
     localparam [3:0] Y_CYC   = (`NHID / `P) + 1;                  // 9  y presented
     localparam [3:0] DEC_CYC = (`NHID / `P) + 1 + `TREE_LAT;      // 11 done/argmax valid
+    // FINAL_K is `PLANES, not N_cap: the final check always waits for the fourth plane
+    // boundary. top_fsm's plane cap must never stop the frame short of it, or the final
+    // check never starts and busy stays high with no alarm.
     localparam [2:0] FINAL_K = `PLANES;                           // 4  = the final answer
 
     // ------------------------------------------------------------------ state
@@ -82,13 +83,13 @@ module checkpoint_ctrl (
 
     wire dec_now   = chk_busy && (chk_cnt == DEC_CYC);
     // The final answer is taken unconditionally; armed checkpoints exit only on
-    // tree_done. t_sel is driven to 0 at the final anyway, which is an always-true
-    // compare (margin = max - 2nd_max >= 0 by construction, ckpt_defs.vh:43), so these
-    // two agree -- the explicit chk_k test is belt and braces, not a second policy.
+    // tree_done. t_sel is 0 at the final, and margin = max - 2nd_max >= 0 by
+    // construction, so exit_tree_2stage's done = (margin >= T) is always true there
+    // anyway; the explicit chk_k test makes the final independent of the tree.
     wire take_exit = dec_now && ((chk_k == FINAL_K) ? 1'b1 : tree_done);
 
     // Free *this* cycle: idle, or the in-flight check resolves now. In the latter case
-    // start = prev_check_end, which is precisely the max() in the scheduling rule.
+    // the new check starts on the decide cycle of the one it replaces.
     wire unit_free = (!chk_busy) || dec_now;
 
     // A boundary that wants a check. Suppressed once the image has answered -- the
@@ -107,7 +108,10 @@ module checkpoint_ctrl (
 
     assign rd_grp = rd_active ? (chk_cnt[2:0] - 3'd1) : 3'd0;
 
-    // I8: lane i is handed addr == `P*rd_grp + i, so addr % `P == i on every cycle.
+    // Lane i is handed addr == `P*rd_grp + i, so addr % `P == i on every cycle. Both x4
+    // ROMs use a grouped decode that reads only the top 3 bits of each 5-bit address
+    // field, which is valid only under this guarantee: a violation returns wrong data,
+    // not an error.
     genvar gi;
     generate
         for (gi = 0; gi < `P; gi = gi + 1) begin : lane_addr
@@ -123,15 +127,22 @@ module checkpoint_ctrl (
     assign capture = (boundary_check && !is_fin_b)
                   || (start_now && (start_k == FINAL_K));
 
-    assign sgn = 1'b0;                                   // I1
+    // Requant negate flag, deliberately tied 0. requant_unit computes
+    // (sgn ? -a1 : a1) + bias; the fold's sign is +1 for all 32 hidden units, so
+    // nothing is negated, and wiring this live would negate every activation.
+    assign sgn = 1'b0;                                   // negate flag, tied 0
 
-    // I2: `PLANES - k_planes. P2 -> 2, P3 -> 1, final -> 0. The wrapper applies this as
-    // an arithmetic right shift on the sign-extended `CKPT_BIAS_W ROM field.
+    // Bias shift amount, `PLANES - chk_k: P1 -> 3, P2 -> 2, P3 -> 1, final -> 0.
+    // ckpt_block applies it as an ARITHMETIC right shift (>>>) on the sign-extended
+    // `CKPT_BIAS_W ROM bias. 8 of the 32 bias values are negative, so a logical shift
+    // compiles and makes every checkpoint margin on those units wrong.
     wire [2:0] bias_sh_full = FINAL_K - chk_k;
     assign bias_sh = bias_sh_full[1:0];
 
-    // I3: b2 from FINAL4_s12_fold_a.npz, class 9 (MSB) down to class 0 (LSB), matching
-    // l2_mac_x4's acc_in packing of `OACC_W bits per class.
+    // b2 (L2 bias) preload for the out-ACC, class 9 in the MSB slot down to class 0 in
+    // the LSB slot, matching l2_mac_x4's acc_in packing of `OACC_W bits per class. The
+    // out-ACC loads it on the first read cycle of every check (oacc_sel_init) in place
+    // of a zero start.
     assign oacc_init = { `OACC_W'sh001,   // b2[9] =  1
                          `OACC_W'sh003,   // b2[8] =  3
                          `OACC_W'shffe,   // b2[7] = -2
@@ -147,8 +158,9 @@ module checkpoint_ctrl (
 
     assign y_valid = chk_busy && (chk_cnt == Y_CYC);
 
-    // I4: held for the whole check, so it is stable on the y_valid cycle two cycles
-    // ahead of done. T=0 at the final makes that compare always true.
+    // A function of chk_k, so held for the whole check and stable on the y_valid cycle
+    // two cycles ahead of done; exit_tree_2stage registers it alongside y. T = 0 at
+    // the final makes the margin >= T compare always true.
     assign t_sel = (chk_k == 3'd1) ? t_cfg[0*`T_W +: `T_W] :
                    (chk_k == 3'd2) ? t_cfg[1*`T_W +: `T_W] :
                    (chk_k == 3'd3) ? t_cfg[2*`T_W +: `T_W] : {`T_W{1'b0}};
@@ -224,8 +236,9 @@ module checkpoint_ctrl (
             end
 
             // A capture landing on a read cycle other than the last one destroys the
-            // in-flight check's snapshot. Unreachable for the frozen {P2,P3} config
-            // (see the header); loud, not silent, if a future config breaks it.
+            // in-flight check's snapshot. Unreachable for the default {P2,P3} arm config
+            // (`CFG_EN_DEFAULT) because a plane is at least `ZS_FILL = `NHID/`P cycles
+            // long (asserted below); loud, not silent, if another arm config breaks it.
             if (capture && rd_active && (chk_cnt != RD_CYC)) sched_err <= 1'b1;
         end
     end

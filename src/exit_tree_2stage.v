@@ -1,7 +1,10 @@
-// exit_tree_2stage -- the shipped terminator: a max/max2 tournament tree cut into two
-// pipeline stages. y presented at cycle N -> argmax/done/margin valid at N+2.
-// T is registered in stage 1 ALONGSIDE y (invariant I4) -- the threshold must be the
-// one that belongs to this check, not the one two cycles later.
+// exit_tree_2stage -- max / runner-up tournament over the 10 class scores in y (the
+// out-ACC register in ckpt_block), cut into two pipeline stages. y presented at cycle N
+// -> argmax / done / margin valid at N+2.
+// T is registered in stage 1 ALONGSIDE y, in the same always block as the stage-1
+// survivors, so the stage-2 compare sees the threshold that belonged to this y, not
+// whatever the T port carries a cycle later when stage 2 evaluates. Do not bypass or
+// re-time rT.
 module exit_tree_2stage (
     input  wire         clk,
     input  wire [119:0] y,
@@ -34,10 +37,14 @@ module exit_tree_2stage (
     max2_node n2_0 (m1_0,i1_0,s1_0, m1_1,i1_1,s1_1, m2_0,i2_0,s2_0);
     max2_node n2_1 (m1_2,i1_2,s1_2, m1_3,i1_3,s1_3, m2_1,i2_1,s2_1);
 
-    // ---- pipeline registers: 3 x (max, idx, sec) = 84 b
+    // ---- pipeline registers: 3 x (max, idx, sec) = 84 b, plus rT (10 b)
     reg signed [11:0] rm0,rm1,rm2, rs0,rs1,rs2;
     reg        [3:0]  ri0,ri1,ri2;
     reg        [9:0]  rT;
+    // No reset on any register in this module (rm*/ri*/rs*/rT, argmax/done/margin): a
+    // deliberate area choice, like the L1 accumulator and the shadow bank. Every check
+    // presents a fresh y and T two cycles before its done is read, so nothing stale is
+    // ever consumed. Adding resets changes the area and timing being preserved.
     always @(posedge clk) begin
         rm0 <= m2_0; ri0 <= i2_0; rs0 <= s2_0;
         rm1 <= m2_1; ri1 <= i2_1; rs1 <= s2_1;
@@ -53,6 +60,10 @@ module exit_tree_2stage (
     always @(posedge clk) begin
         argmax <= i4;
         margin <= m4 - s4;
+        // >= : a margin exactly equal to T counts as an exit. The default thresholds
+        // T2 = 8 and T3 = 12 (T2_DEFAULT / T3_DEFAULT in ckpt_defs.vh) were calibrated
+        // under this compare and under max2_node's lowest-index-wins tie-break (>= in
+        // max2_node.v); changing either one moves the exit boundary they were fitted to.
         done   <= (m4 - s4) >= $signed({2'b0, rT});
     end
 endmodule

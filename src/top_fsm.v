@@ -37,28 +37,29 @@ module top_fsm (
     reg [2:0] pstarted;
     reg       stopped;
 
-    // n_cap is `N_CAP_W = 3 b, so it can carry 5..7 which no buffer can serve. Clamp and
-    // report rather than trust -- see header note 3.
+    // n_cap is `N_CAP_W = 3 b, so it can carry 0 or 5..7, which no buffer can serve.
+    // Clamp to `PLANES and report rather than trust. Values 1..3 pass the clamp, but
+    // checkpoint_ctrl hardcodes FINAL_K = `PLANES, so with fewer than 4 planes the final
+    // check never fires and the chip hangs with no alarm.
     localparam [2:0] PLANE_MAX = `PLANES;   // a macro literal cannot be bit-selected
     wire [2:0] cap_raw   = n_cap[2:0];
     wire       cap_bad   = (cap_raw == 3'd0) || (cap_raw > PLANE_MAX);
     wire [2:0] plane_cap = cap_bad ? PLANE_MAX : cap_raw;
 
-    // Identical in shape to tb_ckpt_block.v's host FSM, with `stopped` and `plane_cap`
-    // replacing its unconditional `pstarted < `PLANES`.
     // `!exit_strobe` as well as `!stopped`: `stopped` is registered, so without the
     // combinational term a swap in the very cycle the decision resolves would still be
     // granted and one more plane would launch for nothing. Under zero-skip that is not
-    // hypothetical -- planes are ~10 cycles and `GAMMA is 11, so a swap lands in that
-    // window often.
+    // hypothetical: a plane can be as short as `ZS_FILL = 8 cycles while a check takes
+    // `GAMMA = 11, so decisions resolve while the next plane is in flight.
     wire more_planes = (pstarted < plane_cap) && !stopped && !exit_strobe;
-    // `!img_start` is load-bearing and cost an hour to find. bitplane_buffer handles
-    // img_start in an else-if chain that PRE-EMPTS swap, so a swap coinciding with
-    // img_start is swallowed -- but scan_start_r would still fire the next cycle and the
-    // scanner would start on a plane that was never promoted (act_v = 0), tripping
-    // active_pixel_scan's `start && !plane_valid` alarm. It only happens when the
-    // previous image left fill_full high, i.e. after an early exit, which is why it is
-    // data-dependent and why no Fase-1 test could have seen it: ckpt_block has no FSM.
+    // `!img_start` is load-bearing. bitplane_buffer handles img_start in an else-if
+    // chain that PRE-EMPTS swap, so a swap coinciding with img_start is swallowed -- but
+    // scan_start_r would still fire the next cycle and the scanner would start on a
+    // plane that was never promoted (act_v = 0), tripping active_pixel_scan's
+    // `start && !plane_valid` alarm. It happens whenever fill_full is still high on
+    // the img_start cycle: a plane an early exit left unconsumed, or one loaded before
+    // START (bitplane_buffer clears fil_v in its img_start branch), so it is
+    // data-dependent.
     wire want_swap   = running && !img_start &&
                        ((priming && fill_full) ||
                         (scan_busy && plane_end && more_planes));
@@ -92,7 +93,7 @@ module top_fsm (
             end else begin
                 if (want_swap) priming <= 1'b0;
                 // incremented with the SWAP, not with the start, so `pstarted` already
-                // names the plane on that plane's own t = 0 cycle (the TB's comment).
+                // names the plane on that plane's own t = 0 cycle.
                 if (want_swap) pstarted <= pstarted + 3'd1;
                 // The exit fired: withhold every further swap. The check already in
                 // flight still completes and still produces ans_valid.

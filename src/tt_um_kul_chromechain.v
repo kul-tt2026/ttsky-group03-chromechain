@@ -47,7 +47,8 @@ module tt_um_kul_chromechain (
 
     wire err_any = sched_err | scan_err | frame_err | blob_err | cap_err;
 
-    // ---- output mux. Every pin is assigned in every view.
+    // ---- output mux. Every pin is assigned in every view. Out of reset view 0 reads
+    // 0x20: ld_ready (bit 5) is high because the fill buffer is empty; nothing else is set.
     reg [7:0] uo_r;
     always @(*) begin
         case (dft_sel)

@@ -1,11 +1,12 @@
 // blob_loader -- fills config_latch from the host, one 8-bit word per cfg_stb.
-// NWORDS/ADDR_W move together with the latch's or the load silently wraps and zeroes
-// every threshold without raising blob_err.
+// NWORDS/ADDR_W must equal config_latch's; cc_top drives both from one parameter pair.
+// A loader with more words than the latch aliases the blob's tail onto the low addresses
+// and never raises blob_err -- the loader saw no overrun (ckpt_defs.vh, cc_top.v).
 `include "ckpt_defs.vh"
 
 module blob_loader #(
-    parameter NWORDS = `CFG_WORDS,      // 6 -> the 48 b blob; 16 was v1's 128 b contract
-    parameter ADDR_W = `CFG_ADDR_W      // 3; 4 alongside NWORDS=16 for the v1 window
+    parameter NWORDS = `CFG_WORDS,      // 6 words x 8 b = 48 b, 43 b of payload in use
+    parameter ADDR_W = `CFG_ADDR_W      // 3; 2^ADDR_W >= NWORDS, checked below
 ) (
     input  wire                      clk,
     input  wire                      rst,        // synchronous, active high
@@ -21,7 +22,7 @@ module blob_loader #(
     output reg  [`CFG_W-1:0]         cfg_wr_data,
     output reg                       cfg_blob_done,
 
-    // ---- status
+    // ---- status (loading and words_seen are left unconnected in cc_top)
     output wire                      loading,
     output wire [ADDR_W:0]           words_seen, // 0..NWORDS, so one bit wider
     output reg                       blob_err    // sticky: strobe past the last word
@@ -32,14 +33,15 @@ module blob_loader #(
 
     wire mode_rise = cfg_mode && !mode_q;
 
-    // A host may raise cfg_mode in the SAME cycle as its first cfg_stb -- the simplest
-    // one does exactly that, and test/test.py::test_config_load is that host. `cnt_eff`
-    // is the count this cycle's strobe acts on, so a restart and a first word can land
-    // together: the word goes to address 0 and IS counted. Without it the write still
-    // happened (cfg_wr_en was never gated by mode_rise) but the counter was reset
-    // instead of incremented, so every later word landed one address low, the final
-    // strobe never saw `last_word`, and blob_done never pulsed -- a chip that never
-    // becomes ready, with blob_err clear and nothing to explain why.
+    // A host may raise cfg_mode in the SAME cycle as its first cfg_stb; the simplest
+    // host does exactly that, and test/test.py::test_config_load is one. `cnt_eff` is
+    // the count this cycle's strobe acts on, so a restart and a first word land
+    // together: the word goes to address 0 and IS counted. Without cnt_eff (counting
+    // from cnt and letting mode_rise reset it) the write still happens, since
+    // cfg_wr_en is not gated by mode_rise, but the counter is reset instead of
+    // advanced: every later word lands one address low, the final strobe never sees
+    // `last_word`, blob_done never pulses and blob_loaded never rises -- with blob_err
+    // clear and nothing to report why.
     wire [ADDR_W:0] cnt_eff = mode_rise ? 0 : cnt;
 
     wire last_word = (cnt_eff == NWORDS - 1);
@@ -62,15 +64,19 @@ module blob_loader #(
         end else begin
             mode_q <= cfg_mode;
 
-            // rising edge of cfg_mode restarts the load -- the only reset path a host
-            // needs, and it clears the error so a retry is a clean retry. The restart
-            // and the first word may be the SAME cycle, so the count advances from
-            // cnt_eff and `take` is tested before the bare restart.
+            // A rising edge of cfg_mode restarts the load and clears blob_err, so a
+            // host can retry without rst. The restart and the first word may be the
+            // SAME cycle: the count advances from cnt_eff, and `take` is tested before
+            // the bare restart. Swapping the two branches below resets cnt to 0 on
+            // that cycle, so the first word is written but not counted (see cnt_eff).
             if (mode_rise) blob_err <= 1'b0;
 
             if (take)           cnt <= cnt_eff + 1'b1;
             else if (mode_rise) cnt <= 0;
 
+            // cfg_addr follows cnt_eff every cycle, write or not, so config_latch's
+            // rd_data shows the word about to be written and parks at NWORDS (outside
+            // the latch) after a complete load.
             cfg_wr_en   <= take;
             cfg_addr    <= cnt_eff[ADDR_W-1:0];
             cfg_wr_data <= cfg_din;

@@ -1,9 +1,10 @@
-// active_pixel_scan -- emits the pixel sequence and the plane length.
-//   plane_len = en_skip ? max(popcount, `ZS_FILL) : `NPIX
-// `start` IS cycle t=0: the first pixel comes combinationally out of `plane` on the start
-// cycle. plane_end is asserted DURING the plane's last accumulate cycle, not after it --
-// that one word is why the A1 snapshot must be taken from acc_next, not acc_live.
-// No abort: a started plane runs its full length.
+// active_pixel_scan -- emits the pixel sequence and the plane length of one bit-plane.
+//   plane_len = en_skip ? max(popcount, `ZS_FILL) : `NPIX.  No abort: a started plane
+//   runs its full length even after an early exit, so `busy` here can stay high for up to
+//   52 cycles after the chip's busy falls (the post-DONE drain). `start` IS cycle t=0 (the
+//   first pixel is combinational from `plane`); plane_end fires DURING the last accumulate
+//   cycle, NOT after it -- which is why the A1 snapshot MUST be taken from acc_next, not
+//   acc_live (ckpt_block.v).
 `include "ckpt_defs.vh"
 
 module active_pixel_scan #(parameter EN_SKIP_FUSED = 0) (
@@ -31,7 +32,7 @@ module active_pixel_scan #(parameter EN_SKIP_FUSED = 0) (
     localparam [`LEN_W-1:0] FILL = `ZS_FILL;
     localparam [`LEN_W-1:0] FULL = `NPIX;
 
-    // 0 = config bit (default), 1 = fused zero-skip, 2 = fused dense. See the header.
+    // 0 = config bit (default), 1 = fused zero-skip, 2 = fused dense.
     wire skip = (EN_SKIP_FUSED == 1) ? 1'b1 :
                 (EN_SKIP_FUSED == 2) ? 1'b0 : en_skip;
 
@@ -41,7 +42,9 @@ module active_pixel_scan #(parameter EN_SKIP_FUSED = 0) (
     reg  [`PC_W-1:0]  pop_q;
     reg               busy_q;
 
-    // THE LENGTH RULE. This one line is the Aug-10 property.
+    // Plane length: skip ? max(pop, `ZS_FILL) : `NPIX. This guarantees len >= pop, which
+    // the plane_end && |nxt self-check below relies on. `ZS_FILL is the minimum plane
+    // length in zero-skip mode; ckpt_defs.vh explains where its value comes from.
     wire [`LEN_W-1:0] pop_x   = {{(`LEN_W-`PC_W){1'b0}}, pop};
     wire [`LEN_W-1:0] len_new = skip ? ((pop_x > FILL) ? pop_x : FILL) : FULL;
 
@@ -53,8 +56,7 @@ module active_pixel_scan #(parameter EN_SKIP_FUSED = 0) (
     wire [`LEN_W-1:0] t_c   = start ? {`LEN_W{1'b0}} : t_q;
     wire [`PC_W-1:0]  pop_c = start ? pop            : pop_q;
 
-    // Lowest set bit, one-hot. cur & -cur; yosys maps the negate's carry chain, which
-    // is the same prefix-AND an explicit "no set bit below i" network would build.
+    // Lowest set bit, one-hot: cur & -cur (all-zero when cur is zero).
     wire [`NPIX-1:0] lsb = cur & (~cur + {{(`NPIX-1){1'b0}}, 1'b1});
 
     // One-hot -> binary: bit b of the index is set iff the hot bit's index has bit b.
@@ -102,8 +104,8 @@ module active_pixel_scan #(parameter EN_SKIP_FUSED = 0) (
             // Contract: `start` only when idle. On the last cycle of a plane the next
             // start belongs to the FOLLOWING cycle, so this is never tight.
             if (start && busy_q)       scan_err <= 1'b1;
-            // The property, self-checked: the plane ran out of cycles before it ran out
-            // of active pixels. Unreachable while len >= pop.
+            // Self-check of the length rule: the plane ran out of cycles before it ran
+            // out of active pixels. Unreachable while len >= pop.
             if (plane_end && (|nxt))   scan_err <= 1'b1;
             // The two independent derivations of "an active pixel remains" -- the
             // popcount compare and the residue -- must agree on every cycle.

@@ -1,20 +1,25 @@
-// config_latch -- the only reloadable state on the chip. A byte-addressable register
-// file whose RESET IMAGE is the frozen shipped config, not zero. Field offsets are
-// frozen in ckpt_defs.vh; t_cfg is a zero-logic slice, never a re-pack.
+// config_latch -- the host-writable configuration register file, NWORDS x `CFG_W b, filled
+// one word at a time by blob_loader. Its RESET IMAGE is the default config from
+// ckpt_defs.vh, not zero. Field offsets are fixed there; t_cfg is a zero-logic slice.
 `include "ckpt_defs.vh"
 
 module config_latch #(
-    parameter NWORDS = `CFG_WORDS,      // 6 -> 48 b; 16 was v1's 128 b window
-    parameter ADDR_W = `CFG_ADDR_W      // 3; 4 alongside NWORDS=16. blob_loader's
+    parameter NWORDS = `CFG_WORDS,      // 6 words x `CFG_W (8 b) = 48 b, 43 in use
+    parameter ADDR_W = `CFG_ADDR_W      // 3: 2^3 = 8 >= NWORDS. blob_loader's
 ) (                                     //    NWORDS/ADDR_W must match -- see its header
     input  wire                  clk,
     input  wire                  rst,        // synchronous, active high
 
     // ---- host/loader port. One shared address; write is `wr_en`, read is always on.
+    // Nothing gates `wr_en` on busy, here or in cc_top: a word strobed mid-inference
+    // lands at once and the decoded fields change under the running image.
     input  wire                  wr_en,
     input  wire [ADDR_W-1:0]     addr,
     input  wire [`CFG_W-1:0]     wr_data,
     input  wire                  blob_done,  // loader: blob fully written
+    // `addr` is blob_loader's write address; there is no host read address. Mid-load
+    // rd_data shows the word about to be overwritten; after a complete load the loader
+    // leaves addr at 6, past the 48 b array, so rd_data is undefined until the next load.
     output wire [`CFG_W-1:0]     rd_data,    // the word at `addr`, combinational
 
     // ---- decoded fields
@@ -27,11 +32,11 @@ module config_latch #(
     output wire                  en_vstrobe, // K11
     output reg                   blob_loaded // K12
 );
-    localparam FLAT_W = NWORDS * `CFG_W;
+    localparam FLAT_W = NWORDS * `CFG_W;     // 48 b at the defaults; [47:43] spare
 
     // Sized so the concatenation below is well-formed. `T1_DEFAULT expands to
     // (1 << `T_W) - 1, an unsized expression that must not go into a concat raw.
-    localparam [`T_W-1:0] T1_RST = `T1_DEFAULT;   // 1023: P1 disarmed by threshold too
+    localparam [`T_W-1:0] T1_RST = `T1_DEFAULT;   // 1023 = max; P1 also disarmed by K7 bit0
     localparam [`T_W-1:0] T2_RST = `T2_DEFAULT;   // 8
     localparam [`T_W-1:0] T3_RST = `T3_DEFAULT;   // 12
 
@@ -56,6 +61,10 @@ module config_latch #(
         else if (wr_en) cfg[addr*`CFG_W +: `CFG_W] <= wr_data;
     end
 
+    // blob_loaded: set by blob_done, cleared by any later write until the next blob_done.
+    // blob_done MUST win when both land in one cycle, and they do on every complete
+    // load: blob_loader raises cfg_wr_en and cfg_blob_done from the same `take` on the
+    // final word, so testing wr_en first would clear the flag the cycle it is set.
     always @(posedge clk) begin
         if (rst)            blob_loaded <= 1'b0;
         else if (blob_done) blob_loaded <= 1'b1;
@@ -84,7 +93,7 @@ module config_latch #(
                      ADDR_W, NWORDS);
             $finish;
         end
-        // The reset image is the frozen config, read back through the same offsets the
+        // The reset image is the default config, read back through the same offsets the
         // field outputs use. Catches a concat that is right by width and wrong by order.
         if (CFG_RST[`CFG_T1_LSB   +: `T_W]       !== T1_RST            ||
             CFG_RST[`CFG_T2_LSB   +: `T_W]       !== T2_RST            ||

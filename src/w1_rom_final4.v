@@ -1,14 +1,19 @@
-// GENERATED from ternary_tapeout/eightbit/stage3/FINAL4_s12_fold_a.npz via
-// w1_rom_synthesis/rom_gen.py words_from_W1 + emit_case -- do not edit by hand.
+// w1_rom_final4 -- W1 weight ROM: 64 words x 64 b, addr = pixel index 0..63 (`PIX_W = 6).
+// GENERATED from the trained W1 fold -- do not edit by hand; regenerate the whole file.
 //
-// WHY THIS FILE EXISTS: w1_rom_synthesis/rtl/w1_h32_case.v holds a DIFFERENT fold --
-// the pre-FINAL4 weights of the July W1-ROM area study. Checked with rom_gen.py's
-// own encode_column(): all 64 of 64 words differ. Instantiating that file would make
-// the chip compute with the wrong W1 and every engine.py comparison would fail, so
-// ckpt_block.v deliberately left the ROM as a PORT. This is the same 64 x 64 b shape,
-// the same encoding (unit j = {p,n} at [2j+1:2j], p = high bit) and the same winning
-// case style as that study -- generated from the champion fold instead.
-// w1_rom_final4: style 1 -- case(addr) with 64 constant literals
+// Word layout: 32 hidden units (`NHID) x 2 b. Unit j is the pair {p,n} at wcol[2j+1:2j]:
+// p (bit 2j+1, the HIGH bit) selects +1, n (bit 2j, the low bit) selects -1, 00 is a
+// zero weight. Real content never sets p and n together. Consumed by l1_horner_acc /
+// l1_horner_cnt (inc = w_col[2j+1], dec = w_col[2j]).
+//
+// NOTE: this is the OPPOSITE pair order to W2 -- l2_mac_x4 reads w_in[20u+2c] as +h
+// (the LOW bit of its pair) and w_in[20u+2c+1] as -h. Each ROM encodes its own
+// consumer's order; swapping either convention without regenerating the ROM negates
+// every weight it feeds.
+//
+// Instantiated once in cc_top (u_w1, addr = w1_addr from the pixel scanner); ckpt_block
+// takes the row as its w1_row input port rather than instantiating the ROM itself.
+// w1_rom_final4: case(addr) with 64 constant literals, default 0
 module w1_rom_final4(input wire [5:0] addr, output reg [63:0] wcol);
   always @(*) begin
     case (addr)

@@ -1,25 +1,23 @@
 // cc_top -- chip level: ckpt_block + top_fsm + blob_loader + the W1 ROM.
-// Instantiates w1_rom_final4 (the FINAL4 fold), never w1_rom_synthesis's area-study ROM.
+// Instantiates w1_rom_final4, the only W1 ROM in the repo (ckpt_block takes it as a port).
 // CFG_NWORDS/CFG_ADDRW drive the latch AND the loader from one parameter pair.
 `include "ckpt_defs.vh"
 
-// ---------------------------------------------------------------- THE v1.1 LEVERS
-// Four area levers, all of them parameters, all defaulting to the v1.1 values. W and
-// OACC_CG were already here; ACC_CNT and the config-latch geometry are added so a
-// TESTBENCH can reach them, not only `chparam`. run_synth.py could always poke a nested
-// parameter (`chparam -set NWORDS 6 config_latch`), but iverilog cannot -- so lever 3 and
-// lever 4 were priced on configurations no simulation had ever run. tb_cc_top.v says it
-// itself: "an area number for a configuration nobody simulated is worthless".
+// ---------------------------------------------------------------- AREA PARAMETERS
+// W, OACC_CG, ACC_CNT, CFG_NWORDS and CFG_ADDRW default to the ckpt_defs.vh values
+// (ACC_W = 10, OACC_CG_DEFAULT = 1, ACC_CNT_DEFAULT = 1, CFG_WORDS = 6, CFG_ADDR_W = 3);
+// SHADOW_CG and EN_SKIP_FUSED are literal defaults here. All are module parameters,
+// overridable at instantiation, and are passed down to ckpt_block (the CFG pair to
+// blob_loader as well).
 //
 // CFG_NWORDS/CFG_ADDRW drive config_latch AND blob_loader from one pair. They are not two
-// independent knobs: the loader owns the word counter and the address, so a 48 b latch
-// behind a 16-word loader wraps words 8..15 onto 0..5 and zeroes the thresholds without
-// raising blob_err. See blob_loader.v's header.
-// Every default comes from ckpt_defs.vh, so "which build is this" is one question with one
-// answer in one file. v1 is this module with W=12, OACC_CG=0, ACC_CNT=0, CFG_NWORDS=16,
-// CFG_ADDRW=4 -- see ckpt_defs.vh's "WHICH BUILD IS THIS".
+// independent knobs: the loader owns the word counter and the address, and neither
+// module's elaboration check sees the other's parameters. A 6-word (48 b) latch behind a
+// 16-word loader aliases blob words 8..15 onto latch addresses 0..7, so the tail of the
+// blob overwrites the thresholds in words 0..3 and blob_err never rises -- the loader saw
+// no overrun. See blob_loader.v's header.
 module cc_top #(
-    parameter W             = `ACC_W,
+    parameter W             = `ACC_W,             // L1 accumulator width (10)
     parameter SHADOW_CG     = 1,
     parameter OACC_CG       = `OACC_CG_DEFAULT,
     parameter EN_SKIP_FUSED = 0,
@@ -31,14 +29,19 @@ module cc_top #(
     input  wire                   rst,          // synchronous, active high
 
     // ---- image framing
-    input  wire                   start,        // 1-cycle pulse: begin an image
+    input  wire                   start,        // 1-cycle pulse: begin an image. Ignored
+                                                // until blob_loaded and while an image runs
     output wire                   busy,
     output wire                   done,         // 1-cycle pulse: `answer` is valid
 
-    // ---- pixel fill port (stage 0/1), `LD_W = 8 b per beat
+    // ---- pixel fill port: `LD_W = 8 b per beat into bitplane_buffer's fill half
     input  wire                   ld_en,
     input  wire [`LD_W-1:0]       ld_data,
-    input  wire                   ld_vstrobe,   // K11
+    input  wire                   ld_vstrobe,   // host marks a plane's last beat. Ignored
+                                                // unless the blob's en_vstrobe bit is set;
+                                                // then a strobe on any beat but the last,
+                                                // a last beat without one, or a strobe
+                                                // outside a fill write, sets frame_err
     output wire                   ld_ready,
     output wire                   ld_done,
     output wire [1:0]             ld_idx,
@@ -48,24 +51,30 @@ module cc_top #(
     input  wire                   cfg_stb,      // one pulse per word
     input  wire [`CFG_W-1:0]      cfg_din,
     output wire [`CFG_W-1:0]      cfg_rd_data,  // the latch word at the loader's write
-                                                // address. That address parks at 6 after a
-                                                // complete load, outside the 48 b latch, so
-                                                // DFT view 1 is undefined after a load and
-                                                // shows the word about to be overwritten
-                                                // mid-load. There is no host read address.
-    output wire                   blob_loaded,  // K12
+                                                // address (uo_out view 1, dft_sel = 1, in
+                                                // the TT wrapper). Mid-load it shows the
+                                                // word about to be overwritten; the address
+                                                // parks at 6 after a complete load, outside
+                                                // the 48 b latch, so the view is undefined
+                                                // until the next load. No host read address.
+    output wire                   blob_loaded,  // set on the blob's last word, cleared by
+                                                // the next config write; top_fsm ignores
+                                                // `start` until it is high
 
     // ---- result
     output wire [3:0]             answer,
     output wire [2:0]             exit_k,       // 0 = ran to the end, else the checkpoint
-    output wire                   ans_valid,
+    output wire                   ans_valid,    // ckpt_block's pulse; `done` is its
+                                                // registered copy one cycle later
 
     // ---- sticky alarms. Every one is a loud version of a silently-wrong-answer class.
     output wire                   sched_err,    // checkpoint scheduling violated
     output wire                   scan_err,     // pixel sequencer violated its contract
     output wire                   frame_err,    // plane framing violated
     output wire                   blob_err,     // config load overran
-    output wire                   cap_err       // n_cap out of range in the blob
+    output wire                   cap_err       // n_cap 0 or 5..7 in the blob (clamped to
+                                                // 4). 1..3 pass the clamp and hang the
+                                                // chip with no alarm: see top_fsm.v
 );
 
     // ---- ckpt_block <-> the rest
@@ -76,8 +85,8 @@ module cc_top #(
     wire [CFG_ADDRW-1:0]   cfg_addr;
     wire [`CFG_W-1:0]      cfg_wr_data;
 
-    wire                   page_sel;     // decoded from the blob; drives nothing
-                                         // (the page-2 mux below is commented out)
+    wire                   page_sel;     // decoded from the blob; drives nothing --
+                                         // only one W1 page is instantiated
     wire [`N_CAP_W-1:0]    n_cap;
 
     wire                   img_start, swap, scan_start;
@@ -96,16 +105,11 @@ module cc_top #(
     wire                   tree_done;
     wire signed [`OACC_W-1:0] tree_margin;
 
-    // ---- W1 ROM. One page; see W1 ROM in the header for why this file and not the
-    // other, and where page 2 would attach.
+    // ---- W1 ROM (w1_rom_final4): one page, 64 rows x 64 b, unit j = {p,n} at
+    // [2j+1:2j] with p (+1) the high bit. page_sel is not consulted.
     w1_rom_final4 u_w1 (.addr(w1_addr), .wcol(w1_row));
-    // PAGE-2 MUX POINT:
-    //   wire [63:0] row_p1, row_p2;
-    //   w1_rom_final4  u_w1_p1 (.addr(w1_addr), .wcol(row_p1));
-    //   w1_rom_thermal u_w1_p2 (.addr(w1_addr), .wcol(row_p2));
-    //   assign w1_row = page_sel ? row_p2 : row_p1;
 
-    // ---- config blob
+    // ---- config blob. loading/words_seen have no chip-level consumer.
     blob_loader #(.NWORDS(CFG_NWORDS), .ADDR_W(CFG_ADDRW)) u_blob (
         .clk(clk), .rst(rst),
         .cfg_mode(cfg_mode), .cfg_stb(cfg_stb), .cfg_din(cfg_din),

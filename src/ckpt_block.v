@@ -1,12 +1,13 @@
-// ckpt_block -- the integration: fourteen modules wired into one datapath. It owns
-// exactly one register, the OACC_BUS-wide out-ACC. Almost every trap in the design lives
-// on one of its nets, and a wrong wire here compiles clean and computes a plausible
-// wrong answer.
-//   THE ONE TO GET RIGHT: the A1 snapshot is fed from l1_horner_acc's acc_NEXT (its D
-//   side), not acc_live. plane_end is asserted during the plane's last accumulate cycle,
-//   so at that edge the flop output is still one pixel short. Invisible under dense
-//   ordering, wrong in 69.5% of zero-skip planes.
-//   The W1 ROM is a PORT here, not an instance -- cc_top owns it.
+// ckpt_block -- the checkpoint datapath: config latch, bitplane buffer, pixel scanner, L1
+// Horner accumulator, A1 snapshot bank, ROMs, requant lanes, L2 MAC, out-ACC and exit tree
+// wired into one block. It owns exactly one register, the `OACC_BUS-wide out-ACC. The W1
+// ROM is a port here, not an instance: cc_top owns it (w1_rom_final4).
+//   THE ONE TO GET RIGHT: the A1 snapshot bank is fed from the L1 accumulator's acc_NEXT
+//   (its D side), not acc_live. plane_end is asserted during the plane's last accumulate
+//   cycle, so at that edge the flop output is still one pixel short. Wiring acc_live
+//   compiles clean and leaves every checkpoint a pixel behind whenever that last cycle
+//   accumulates an active pixel: under zero-skip ordering whenever popcount >= `ZS_FILL,
+//   under dense ordering only when pixel 63 is set.
 `include "ckpt_defs.vh"
 
 `ifdef SYNTHESIS
@@ -33,38 +34,29 @@ module ckpt_block #(
     // 1 = l1_acc_shadow_cg (one integrated clock gate), 0 = l1_acc_shadow (320 enables).
     parameter SHADOW_CG     = 1,
     // out-ACC storage: 0 = 120 load-enable flops (edfxtp_1), 1 = 120 plain flops behind
-    // one dlclkp_1. v1 was 0 -- the coding ckpt_tb/tb_checkpoint_ctrl.v had been verifying
-    // since Jul 30. v1.1 takes the gate; both codings stay in verify.py's gate and both
-    // are measured, see l2_synthesis/results.md.
+    // one dlclkp_1. Default `OACC_CG_DEFAULT = 1.
     parameter OACC_CG       = `OACC_CG_DEFAULT,
     // passed straight to active_pixel_scan: 0 = config bit, 1 = fused zero-skip,
     // 2 = fused dense.
     parameter EN_SKIP_FUSED = 0,
-    // config_latch geometry, PASSED THROUGH so a build can reach it from a testbench.
-    // Defaults follow ckpt_defs.vh: 6 words / 48 b since v1.1, 16 / 128 b in v1.
-    // run_synth.py used to reach this with `chparam -set NWORDS 6 config_latch`, which
-    // works for a synthesis probe and is unreachable from iverilog -- and an area number
-    // for a configuration nobody simulated is worthless (tb_cc_top.v's own words). The
-    // loader that fills this latch is parameterised in lockstep one level up; see
-    // blob_loader.v's header.
+    // config_latch geometry, passed down from cc_top, which drives config_latch and
+    // blob_loader from the same CFG_NWORDS/CFG_ADDRW pair; the two must match (see
+    // blob_loader.v's header). Defaults follow ckpt_defs.vh: `CFG_WORDS = 6 words x
+    // `CFG_W = 8 b = 48 b, 43 in use.
     parameter CFG_NWORDS = `CFG_WORDS,
     parameter CFG_ADDRW  = `CFG_ADDR_W,
-    // SYNTHESIS PROBE, NEVER A SHIPPING BUILD. 1 ties `ckpt_en` to 0 at elaboration, so
-    // yosys deletes everything that exists only to serve mode 3 -- the arming decode, the
-    // threshold mux, the pending-check slot, exit_tree_2stage's rT compare. The delta
-    // against the default build is therefore the silicon COST of the conformal exit
-    // mechanism, which is the number the flagship same-die A/B owes alongside its cycle
-    // saving. It is a probe and not a candidate: a die built this way has no mode 3, so it
-    // has no A/B, and the flagship claim (DESIGN_LEDGER.md:39) needs BOTH arms on ONE die.
-    // Note what it does NOT delete, which is the point of the gamma-matched framing: the
-    // requant lanes, l2_mac_x4 and exit_tree_2stage all survive, because mode 1 needs them
-    // too. See l2_synthesis/results.md "What the exit mechanism costs".
+    // SYNTHESIS PROBE, NEVER A SHIPPING BUILD; cc_top always passes 0. 1 ties `ckpt_en` to
+    // 0 at elaboration, so no checkpoint is ever armed and the only check that runs is the
+    // final one; synthesis can then remove or simplify what exists only to serve armed
+    // checkpoints (the arming decode, the threshold mux, the pending-check slot,
+    // exit_tree_2stage's rT compare). The requant lanes, l2_mac_x4 and exit_tree_2stage
+    // survive because the final check uses them too.
     parameter MODE1_ONLY = 0
 ) (
     input  wire                          clk,
     input  wire                          rst,          // synchronous, active high
 
-    // ---- image framing. Fase 3's FSM drives these; see NOT IN SCOPE above.
+    // ---- image framing, driven by top_fsm
     input  wire                          img_start,    // 1-cycle pulse before plane 1
     input  wire                          swap,         // promote fill -> active
     input  wire                          scan_start,   // 1-cycle pulse, IS cycle t = 0
@@ -72,12 +64,12 @@ module ckpt_block #(
     // ---- host fill port (stage 0)
     input  wire                          ld_en,
     input  wire [`LD_W-1:0]              ld_data,
-    input  wire                          ld_vstrobe,   // K11
+    input  wire                          ld_vstrobe,   // K11: host marks a plane's last beat
     output wire                          ld_ready,
     output wire                          ld_done,
     output wire [1:0]                    ld_idx,
 
-    // ---- W1 ROM, external. See "W1 ROM: A PORT".
+    // ---- W1 ROM, external: cc_top instantiates w1_rom_final4 and wires it here.
     output wire [`PIX_W-1:0]             w1_addr,
     input  wire [(2*`NHID)-1:0]          w1_row,       // unit j = {p,n} at [2j+1:2j]
 
@@ -87,7 +79,7 @@ module ckpt_block #(
     input  wire [`CFG_W-1:0]             cfg_wr_data,
     input  wire                          cfg_blob_done,
     output wire [`CFG_W-1:0]             cfg_rd_data,
-    output wire                          blob_loaded,  // K12
+    output wire                          blob_loaded,  // K12: top_fsm ignores START until 1
     output wire                          page_sel,
     output wire [`N_CAP_W-1:0]           n_cap,
 
@@ -111,7 +103,8 @@ module ckpt_block #(
     output wire [2:0]                    exit_k_held,
     output wire                          ans_valid,
 
-    // ---- the score vector and the tree's raw outputs (the Fase-1 gate observes these)
+    // ---- the score vector and the tree's raw outputs, exposed for observation (cc_top
+    // wires them to internal nets with no further consumer)
     output wire [`OACC_BUS-1:0]          y,            // out-ACC, class 9 (MSB) .. 0
     output wire [3:0]                    tree_argmax,
     output wire                          tree_done,
@@ -139,11 +132,9 @@ module ckpt_block #(
     );
 
     // THE MODE SWITCH, and it is one net. Mode 3 is `ckpt_en` from the blob; mode 1 is the
-    // same net at 0. There is no mode-dependent datapath anywhere below this line -- both
-    // modes drain through the single requant / l2_mac_x4 / exit_tree_2stage instances,
-    // which is what makes gamma a property of the die rather than of the mode and the
-    // same-die A/B honest. MODE1_ONLY only lets synthesis PRICE the difference; it is not
-    // how the mode is selected at run time.
+    // same net at 0. There is no mode-dependent datapath anywhere below this line: both
+    // modes drain through the single requant / l2_mac_x4 / exit_tree_2stage instances.
+    // MODE1_ONLY is a synthesis-only override, not a run-time mode select.
     wire [`PLANES-2:0] ckpt_en = (MODE1_ONLY != 0) ? {(`PLANES-1){1'b0}} : ckpt_en_cfg;
 
     // ------------------------------------------------------------------ input side
@@ -173,13 +164,10 @@ module ckpt_block #(
     // ------------------------------------------------------------------ L1
     wire [(`NHID*W)-1:0] acc_live, acc_next;
 
-    // ACC_CNT picks the accumulator FORM, not its behaviour: l1_horner_cnt is proven
-    // equivalent to l1_horner_acc over 200,000 random cycles and differs only in writing
-    // the +-1 update as a carry chain instead of an adder (-0.149 t standalone). The
-    // shipping default is 1 (`ACC_CNT_DEFAULT); the parameter exists so the saving can be
-    // measured AT CHIP LEVEL, because l1_horner_cnt is 1.3 ns slower standalone and the
-    // accumulator sits at the tail of the chip's critical path -- so the area win might
-    // cost fmax, and that has to be measured rather than assumed.
+    // ACC_CNT selects the accumulator's coding, not its behaviour: 1 = l1_horner_cnt
+    // writes the +-1 update as a carry chain, 0 = l1_horner_acc writes it as an adder;
+    // both give the same acc_live / acc_next every cycle. Default `ACC_CNT_DEFAULT = 1.
+    // Neither has a reset: img_start forces base = 0 and is the reset path.
     generate
     if (ACC_CNT) begin : g_cnt
         l1_horner_cnt #(.W(W)) l1 (
@@ -218,8 +206,10 @@ module ckpt_block #(
     );
 
     // ------------------------------------------------------- A1 snapshot bank
-    // acc_NEXT, not acc_live -- see BOUNDARY SKEW in the header. This one net is the
-    // difference between a bit-exact block and one that is quietly a pixel behind.
+    // acc_NEXT, not acc_live -- see THE ONE TO GET RIGHT in the header: plane_end is
+    // asserted during the plane's last accumulate cycle, so the flop output is still one
+    // pixel short at that edge. This one net is the difference between a bit-exact block
+    // and one that is quietly a pixel behind.
     wire [(`P*W)-1:0] a1_out;
     generate
         if (SHADOW_CG != 0) begin : shadow_cg
@@ -235,10 +225,11 @@ module ckpt_block #(
         end
     endgenerate
 
-    // ------------------------------------------------------------------ ROMs (I8)
+    // ------------------------------------------------------------------ ROMs
     // One shared address bus for both ROMs. checkpoint_ctrl builds it as
-    // `P*rd_grp + lane, so lane i always sees addr % `P == i -- which is what the
-    // GROUPED decode requires and what it returns wrong data (not an error) without.
+    // `P*rd_grp + lane, so lane i always sees addr % `P == i. Both x4 ROMs use a GROUPED
+    // decode that reads only the top 3 bits of each 5-bit address field, which is valid
+    // only under that guarantee: a violation returns wrong data, not an error.
     wire [(`P*`THETAK_ROW_W)-1:0] thetak;
     wire [(`P*`W2_ROW_W)-1:0]     w2col;
     requant_rom_x4   rq  (.addr(rom_addr), .wcol(thetak));
@@ -257,21 +248,21 @@ module ckpt_block #(
                 thetak[`THETAK_ROW_W*u + `CKPT_BIAS_W +: `K_W];
             wire signed [W-1:0] a1_raw = a1_out[W*u +: W];
 
-            // I2. Both widen by SIGN extension (signed-to-signed assignment) and the
-            // shift is ARITHMETIC, matching numpy's floor semantics in
-            // engine.py:true_score_at -- `s = PLANES - k_planes; bias >> s`. 8 of the
-            // 32 FINAL4 bias values are negative, so a logical shift here is a silent
-            // error: it compiles and every checkpoint margin on those units comes out
-            // wrong, which makes the frozen T2/T3 meaningless.
+            // Both widen by SIGN extension (signed-to-signed assignment) and the shift
+            // is ARITHMETIC (>>>): floor division of the signed bias by 2^bias_sh, where
+            // bias_sh = `PLANES - k comes from checkpoint_ctrl. 8 of the 32 ROM bias
+            // values are negative, so a logical shift here is a silent error: it
+            // compiles and every checkpoint margin on those units comes out wrong,
+            // which makes the calibrated T2/T3 meaningless.
             wire signed [`BIAS_W-1:0] bias_ext = $signed(bias_raw);
             wire signed [`BIAS_W-1:0] bias_shf = bias_ext >>> bias_sh;
             wire signed [`BIAS_W-1:0] a1_ext   = $signed(a1_raw);
 
             requant_unit ru (
                 .a1   (a1_ext),
-                .sgn  (sgn),          // I1: checkpoint_ctrl ties this 0. The fold's
-                                      // `sign` is +1 for all 32 units, and this port is
-                                      // a NEGATE flag -- 1 would negate every activation.
+                .sgn  (sgn),          // checkpoint_ctrl ties this 0. The fold's `sign`
+                                      // is +1 for all 32 units, and this port is a
+                                      // NEGATE flag -- 1 would negate every activation.
                 .bias (bias_shf),
                 .k    (kq),
                 .h    (h[`H_W*u +: `H_W])
@@ -280,13 +271,13 @@ module ckpt_block #(
     endgenerate
 
     // ------------------------------------------------------ L2 MAC + the out-ACC
-    // THE ONLY NEW LOGIC IN THIS FILE. l2_mac_x4 is combinational, so this register is
+    // The only register in this file. l2_mac_x4 is combinational, so this register is
     // the accumulator: `NCLASS x `OACC_W = 120 b.
     //
-    // I3: acc_in is oacc_init (= b2, from checkpoint_ctrl) on the first read cycle of
-    // every check and the feedback on the other seven. Preloading zero instead of b2
-    // moves every class score by up to 3 -- well inside the T2 = 8 / T3 = 12 thresholds,
-    // so it changes exit decisions rather than obviously breaking.
+    // acc_in is oacc_init (= b2, from checkpoint_ctrl) on the first read cycle of every
+    // check and the feedback on the other seven. Preloading zero instead of b2 moves
+    // every class score by up to 3 -- well inside the T2 = 8 / T3 = 12 thresholds, so
+    // it changes exit decisions rather than obviously breaking.
     reg  [`OACC_BUS-1:0] oacc;
     wire [`OACC_BUS-1:0] acc_in = oacc_sel_init ? oacc_init : oacc;
     wire [`OACC_BUS-1:0] acc_out;
@@ -300,18 +291,17 @@ module ckpt_block #(
             // checkpoint_ctrl (it is a function of chk_cnt), so it is stable while CLK
             // is high -- the real cell's setup/hold requirement on GATE. The `else
             // branch is the same liberty statetable transcription l1_acc_shadow_cg.v
-            // carries; see that file for the full derivation.
+            // carries; see that file's behavioural-model note.
             wire ogclk;
 `ifdef SYNTHESIS
             sky130_fd_sc_hd__dlclkp_1 ocg (.CLK(clk), .GATE(oacc_en), .GCLK(ogclk));
 `else
-            // INTENTIONAL LATCH -- it is the whole point of the model: the dlclkp_1
-            // cell's internal M0, transparent to GATE while CLK is low and holding
-            // while CLK is high. Verilator's LATCH check is an ERROR in librelane's
-            // lint step (Checker.LintErrors), so silence it around exactly the lines
-            // that mean it rather than globally in config.json. NOT `always_latch`:
-            // that is a SystemVerilog keyword, and a tool-dialect mismatch is what
-            // took this repo's CI down once already.
+            // INTENTIONAL LATCH: it models the dlclkp_1 cell's internal M0, transparent
+            // to GATE while CLK is low and holding while CLK is high. Verilator's LATCH
+            // check fails the flow's lint step (RUN_LINTER = 1 in config.json), so it is
+            // silenced around exactly the lines that mean it rather than globally. NOT
+            // `always_latch`: that is a SystemVerilog keyword and the sources are plain
+            // Verilog.
             reg ogate;
             /* verilator lint_off LATCH */
             always @(*)
@@ -329,13 +319,13 @@ module ckpt_block #(
     assign y = oacc;
 
     // ------------------------------------------------------------------ exit tree
-    // I4: T is registered in stage 1 alongside y, so t_sel has to be right on the
-    // y_valid cycle -- two cycles before done, not on the done cycle. checkpoint_ctrl
-    // holds t_sel constant for the whole check, so it is valid on every cycle of it.
-    // I5: y at cycle N -> argmax/done/margin at N+2 (`TREE_LAT).
-    // I6: the >=T compare and the lowest-index tie-break live inside this module and
-    //     are NOT re-implemented here. T2 = 8 and T3 = 12 were calibrated under exactly
-    //     those two conventions.
+    // T is registered in stage 1 alongside y, so t_sel has to be right on the y_valid
+    // cycle -- two cycles before done, not on the done cycle. checkpoint_ctrl holds
+    // t_sel constant for the whole check, so it is valid on every cycle of it.
+    // y at cycle N -> argmax/done/margin at N+2 (`TREE_LAT).
+    // The >=T compare and the lowest-index tie-break (max2_node) live inside this module
+    // and are NOT re-implemented here. T2 = 8 and T3 = 12 were calibrated under exactly
+    // those two conventions; changing either shifts every exit decision.
     exit_tree_2stage tree (
         .clk(clk), .y(oacc), .T(t_sel),
         .argmax(tree_argmax), .done(tree_done), .margin(tree_margin)

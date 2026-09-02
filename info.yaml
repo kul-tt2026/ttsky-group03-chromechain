@@ -25,15 +25,10 @@ project:
   top_module:  "tt_um_kul_chromechain"
 
   # Every module the design instantiates. Must stay identical to PROJECT_SOURCES in
-  # test/Makefile -- letting those two drift is a standard TT trap. ckpt_defs.vh is
-  # `included by most of these and lives in src/ as well, but it is a header, not a
-  # source file, so it is not listed.
-  #
-  # The pixel-serial line of work (project.v, argmax.v, rekwantisatie*.v,
-  # ternary_mac_L1/L2.v, zero_skip_pixel_serial.v, controller.v, topmodule.v) is NOT
-  # here: commit b4fb1e4 deleted it from this branch. It is still on main, and this
-  # branch has never been merged there, so nothing is lost -- but merging this branch
-  # into main WOULD delete it. That is a team decision, not a merge detail.
+  # test/Makefile: the GDS builds from this list and the tests build from that one, so
+  # a file in one and not the other means the thing simulated is not the thing taped
+  # out. ckpt_defs.vh is `included by most of these and lives in src/ too, but it is a
+  # header, not a source file, so it is not listed.
   source_files:
     - "tt_um_kul_chromechain.v"
     - "cc_top.v"

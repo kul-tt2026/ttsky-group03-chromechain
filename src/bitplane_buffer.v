@@ -9,7 +9,7 @@ module bitplane_buffer #(parameter LD_W = `LD_W) (
     input  wire                 rst,          // synchronous, active high
     input  wire                 img_start,    // 1-cycle pulse: next plane loaded is 0
 
-    // ---- host fill port (stage 0 drives this; it is never back-pressured mid-plane)
+    // ---- host fill port (wired straight from the pins; never back-pressured mid-plane)
     input  wire                 ld_en,
     input  wire [LD_W-1:0]      ld_data,      // LD_W pixels, bit 0 = lowest pixel index
     input  wire                 ld_vstrobe,   // K11: host marks a plane's LAST beat
@@ -33,8 +33,7 @@ module bitplane_buffer #(parameter LD_W = `LD_W) (
     localparam BCW   = $clog2(BEATS);         // 3
     localparam PIW   = $clog2(`PLANES);       // 2
 
-    // 2 x `NPIX = 128 b -- the whole of stage 1's state (gate_calibration.md's
-    // "1 input staging ... 128 DFF").
+    // 2 x `NPIX = 128 b of buffer state: one half being filled, one half being scanned.
     reg [`NPIX-1:0] act_buf, fil_buf;
     reg             act_v,   fil_v;           // holds a COMPLETE plane
     reg             act_inv, fil_inv;         // K10 bit, travelling with its plane
@@ -44,6 +43,8 @@ module bitplane_buffer #(parameter LD_W = `LD_W) (
     wire last_beat = (beat == BEATS - 1);
     // A swap frees the fill half on the SAME cycle, so the host loses no beat to the
     // handover. This is what lets an 8-beat fill hide entirely under an 8-cycle plane.
+    // Without the `swap` term a beat on the swap cycle is refused and flagged as an
+    // overrun, and a streaming host needs 9 cycles per plane against a floor of 8.
     wire fil_free  = !fil_v || swap;
     wire fill_wr   = ld_en && fil_free;
 
@@ -66,15 +67,14 @@ module bitplane_buffer #(parameter LD_W = `LD_W) (
             frame_err <= 1'b0;
         end else if (img_start) begin
             // A partially filled half here is a torn plane: the frame restarted
-            // mid-plane. A COMPLETE unconsumed plane is not flagged -- a host that
-            // pipelines the next image's plane 0 early is discarding its own data
-            // knowingly, and blocking that would forbid back-to-back frames.
+            // mid-plane. A COMPLETE unconsumed plane is not flagged: img_start clears
+            // fil_v and act_v below, so a plane loaded before img_start is silently
+            // discarded.
             if (beat != {BCW{1'b0}}) frame_err <= 1'b1;
             // A beat presented on the img_start cycle is DROPPED (the fill write below
             // is in the else branch). Silently losing it would shift every subsequent
             // beat by one and tear the plane, so it is flagged: the host owes one idle
-            // cycle at img_start. Costing a cycle here is free -- the 8-beat prologue
-            // of plane 0 has no plane to overlap with anyway.
+            // cycle at img_start.
             if (ld_en) frame_err <= 1'b1;
             beat <= {BCW{1'b0}};
             fil_v <= 1'b0;      act_v <= 1'b0;
@@ -84,7 +84,8 @@ module bitplane_buffer #(parameter LD_W = `LD_W) (
             // ORDER MATTERS, and it is the nonblocking last-write-wins rule doing the
             // work: `swap` is written first and the fill write second, so a beat
             // arriving on the swap cycle lands at position 0 of the just-freed half and
-            // its `beat <= 1` overrides swap's `beat <= 0`. Do not reorder these.
+            // its `beat <= 1` overrides swap's `beat <= 0`. Do not reorder these and do
+            // not merge them into an if/else: either change drops one beat per swap.
             if (swap) begin
                 act_buf <= fil_buf;
                 act_v   <= fil_v;
@@ -105,8 +106,9 @@ module bitplane_buffer #(parameter LD_W = `LD_W) (
             end
             if (ld_en && !fil_free) frame_err <= 1'b1;      // overrun: beat dropped
 
-            // K11. Armed, the host's plane boundary must be exactly this module's:
-            // a strobe on a non-final beat, or a final beat without one, is a slip.
+            // K11. Armed, the host's plane boundary must be exactly this module's: a
+            // strobe on a non-final beat, a final beat without one, or a strobe with no
+            // accepted beat, is a slip.
             if (en_vstrobe && fill_wr && (ld_vstrobe != last_beat)) frame_err <= 1'b1;
             if (en_vstrobe && ld_vstrobe && !fill_wr)              frame_err <= 1'b1;
         end
