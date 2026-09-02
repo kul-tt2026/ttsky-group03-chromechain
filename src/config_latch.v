@@ -15,7 +15,7 @@ module config_latch #(
     input  wire [ADDR_W-1:0]     addr,
     input  wire [`CFG_W-1:0]     wr_data,
     input  wire                  blob_done,  // loader: blob fully written
-    output wire [`CFG_W-1:0]     rd_data,    // combinational readback (march + scan-out)
+    output wire [`CFG_W-1:0]     rd_data,    // the word at `addr`, combinational
 
     // ---- decoded fields
     output wire [(3*`T_W)-1:0]   t_cfg,      // {T3,T2,T1} -- checkpoint_ctrl's port
@@ -39,7 +39,7 @@ module config_latch #(
     // check below re-derives every field from CFG_RST and compares against the macros,
     // so a mis-ordered concat is a loud failure, not a silently wrong default.
     localparam [FLAT_W-1:0] CFG_RST = {
-        {(FLAT_W - `CFG_BITS){1'b0}},   // [127:43] spare
+        {(FLAT_W - `CFG_BITS){1'b0}},   // [47:43]  spare
         `CFG_VST_DEFAULT,               // [42]     K11
         `CFG_NCAP_DEFAULT,              // [41:39]  N_cap
         `CFG_INV_DEFAULT,               // [38:35]  K10

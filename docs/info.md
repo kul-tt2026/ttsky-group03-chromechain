@@ -17,9 +17,9 @@ decided — under a distribution-free conformal guarantee.
 
 64 inputs, 32 hidden units, 10 classes. Every weight is ternary (-1, 0, +1), so a
 multiply collapses into a select-and-add: the L1 layer is a signed popcount rather than a
-multiplier array. Hidden activations are 4-bit unsigned. The L2 layer evaluates `P = 4`
-classes per cycle, and its weights and requantisation shifts live in small ROMs with four
-read ports.
+multiplier array. Hidden activations are 4-bit unsigned. The L2 layer consumes `P = 4`
+hidden units per cycle, updating all 10 class scores each cycle, and its weights and
+requantisation shifts live in small ROMs with four read ports.
 
 ### Bit-serial, plane-major
 
@@ -44,7 +44,7 @@ adds to the work planes 1..k already did — the exit is *anytime*, not restart.
 
 ### Configuration
 
-A 6-byte blob (48 bits, 43 in use) is shifted in before the first image and holds three
+A 6-byte blob (48 bits, 43 in use) is written in before the first image and holds three
 10-bit thresholds, per-checkpoint arm bits, per-plane inversion, the zero-skip enable, a
 weight-page select, a per-plane valid-strobe enable, and `N_cap` — the maximum number of
 planes to run. By default checkpoints 2 and 3 are armed and checkpoint 1 is disarmed.
@@ -94,8 +94,9 @@ on for up to 52 cycles after `BUSY` falls. Wait that long before the next `START
 the next image's first plane is scanned before it is loaded and the scanner alarm
 latches.
 
-**5. See where it exited.** With `DFT_SEL = 2`, `uo_out[2:0]` carries `exit_k` — the plane
-the decision was taken on. On easy digits this is 1 or 2 rather than 4, and that
+**5. See where it exited.** With `DFT_SEL = 2`, `uo_out[2:0]` carries `exit_k` — the
+checkpoint the decision was taken at (2 or 3 with the default arming), or 0 when the
+answer came from the final plane. On easy digits this is 2 rather than 0, and that
 difference is the entire point of the design.
 
 ### Output views
@@ -119,4 +120,5 @@ microcontroller, an FPGA, or the RP2040 on the Tiny Tapeout demo board. No PMOD,
 or analog front end is required.
 
 Outputs are plain logic levels, so four LEDs on `uo_out[3:0]` are enough to read the
-predicted class directly, with a fifth on `uo_out[4]` for `DONE`.
+predicted class directly: the answer is held until the next image. `DONE` on `uo_out[4]`
+is a single-cycle pulse, so it needs a latch or a logic analyser rather than an LED.

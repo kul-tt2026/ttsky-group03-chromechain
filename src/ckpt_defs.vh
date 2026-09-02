@@ -80,7 +80,7 @@
 `define P          4        // L2 units per cycle (lever B1). P=4 is the measured knee.
 `define GAMMA     11        // check latency: 8 (act||L2 at P=4) + 2 (tree) + 1
 `define ZS_FILL    8        // zero-skip plane length = max(popcount, ZS_FILL)
-`define TREE_LAT   2        // term_tree_p2: y at cycle N -> done at N+2
+`define TREE_LAT   2        // exit_tree_2stage: y at cycle N -> done at N+2
 
 // ---------------------------------------------------------------- input side (1 + 6)
 // Index and count widths for the bitplane buffer / zero-skip sequencer. `PC_W and

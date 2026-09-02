@@ -30,7 +30,7 @@ module ckpt_block #(
     parameter ACC_CNT = `ACC_CNT_DEFAULT,   // 1 = carry-chain accumulator (l1_horner_cnt)
     // L1 accumulator width, `ACC_W = 10: the reachable range is -480..+420.
     parameter W             = `ACC_W,
-    // 1 = l1_acc_shadow_cg (one integrated clock gate), 0 = l1_acc_shadow (384 enables).
+    // 1 = l1_acc_shadow_cg (one integrated clock gate), 0 = l1_acc_shadow (320 enables).
     parameter SHADOW_CG     = 1,
     // out-ACC storage: 0 = 120 load-enable flops (edfxtp_1), 1 = 120 plain flops behind
     // one dlclkp_1. v1 was 0 -- the coding ckpt_tb/tb_checkpoint_ctrl.v had been verifying
@@ -175,8 +175,8 @@ module ckpt_block #(
 
     // ACC_CNT picks the accumulator FORM, not its behaviour: l1_horner_cnt is proven
     // equivalent to l1_horner_acc over 200,000 random cycles and differs only in writing
-    // the +-1 update as a carry chain instead of an adder (-0.149 t standalone). Default
-    // 0 keeps the shipping build bit-identical; the parameter exists so the saving can be
+    // the +-1 update as a carry chain instead of an adder (-0.149 t standalone). The
+    // shipping default is 1 (`ACC_CNT_DEFAULT); the parameter exists so the saving can be
     // measured AT CHIP LEVEL, because l1_horner_cnt is 1.3 ns slower standalone and the
     // accumulator sits at the tail of the chip's critical path -- so the area win might
     // cost fmax, and that has to be measured rather than assumed.
