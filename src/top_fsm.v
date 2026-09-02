@@ -37,13 +37,14 @@ module top_fsm (
     reg [2:0] pstarted;
     reg       stopped;
 
-    // n_cap is `N_CAP_W = 3 b, so it can carry 0 or 5..7, which no buffer can serve.
-    // Clamp to `PLANES and report rather than trust. Values 1..3 pass the clamp, but
-    // checkpoint_ctrl hardcodes FINAL_K = `PLANES, so with fewer than 4 planes the final
-    // check never fires and the chip hangs with no alarm.
+    // n_cap is `N_CAP_W = 3 b. Only `PLANES is a value this chip can serve: 0 and 5..7
+    // name planes no buffer has, and 1..3 would stop the frame before the final plane
+    // boundary that checkpoint_ctrl waits for (FINAL_K = `PLANES), so the final check
+    // would never fire and the chip would hang with no alarm. Every value but `PLANES
+    // is therefore clamped to `PLANES and reported on cap_err.
     localparam [2:0] PLANE_MAX = `PLANES;   // a macro literal cannot be bit-selected
     wire [2:0] cap_raw   = n_cap[2:0];
-    wire       cap_bad   = (cap_raw == 3'd0) || (cap_raw > PLANE_MAX);
+    wire       cap_bad   = (cap_raw != PLANE_MAX);
     wire [2:0] plane_cap = cap_bad ? PLANE_MAX : cap_raw;
 
     // `!exit_strobe` as well as `!stopped`: `stopped` is registered, so without the

@@ -49,9 +49,9 @@ A 6-byte blob (48 bits, 43 in use) is written in before the first image and hold
 weight-page select, a per-plane valid-strobe enable, and `N_cap` — the maximum number of
 planes to run. By default checkpoints 2 and 3 are armed and checkpoint 1 is disarmed.
 Leave `N_cap` at 4: the checkpoint controller always waits for the fourth plane
-boundary, so a cap of 1, 2 or 3 leaves `BUSY` high forever with no alarm and no `DONE`,
-and only a reset recovers. Values 0 and 5–7 are clamped to 4 and raise the `N_cap`
-alarm.
+boundary. Any other value is clamped to 4 and raises the `N_cap` alarm on `DFT_SEL = 3`
+(and `ERR`), so a host that meant to run fewer planes sees why the chip is still
+waiting for them.
 
 Until the blob is loaded, `START` is ignored. A chip that classified with reset-value
 thresholds would be silently wrong; this makes it visibly stalled instead.

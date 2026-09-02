@@ -60,8 +60,9 @@ module checkpoint_ctrl (
     localparam [3:0] Y_CYC   = (`NHID / `P) + 1;                  // 9  y presented
     localparam [3:0] DEC_CYC = (`NHID / `P) + 1 + `TREE_LAT;      // 11 done/argmax valid
     // FINAL_K is `PLANES, not N_cap: the final check always waits for the fourth plane
-    // boundary. top_fsm's plane cap must never stop the frame short of it, or the final
-    // check never starts and busy stays high with no alarm.
+    // boundary. top_fsm therefore clamps every other N_cap value to `PLANES (and raises
+    // cap_err); a frame stopped short of the fourth boundary would never start the
+    // final check and busy would stay high with no alarm.
     localparam [2:0] FINAL_K = `PLANES;                           // 4  = the final answer
 
     // ------------------------------------------------------------------ state

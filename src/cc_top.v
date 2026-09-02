@@ -76,9 +76,8 @@ module cc_top #(
     output wire                   scan_err,     // pixel sequencer violated its contract
     output wire                   frame_err,    // plane framing violated
     output wire                   blob_err,     // config load overran
-    output wire                   cap_err       // n_cap 0 or 5..7 in the blob (clamped to
-                                                // 4). 1..3 pass the clamp and hang the
-                                                // chip with no alarm: see top_fsm.v
+    output wire                   cap_err       // n_cap in the blob was not `PLANES; it
+                                                // was clamped to `PLANES (see top_fsm.v)
 );
 
     // ---- ckpt_block <-> the rest
