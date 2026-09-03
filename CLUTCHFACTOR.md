@@ -1,8 +1,10 @@
 # clutchfactor -- submission candidate for Chrome Chain (TTSKY26c)
 
-Branch `clutchfactor` in `~/Documents/Projects/ttsky-clutchfactor`, cut from `origin/main`
-at `b5939b8` (the green run: DRC 0, LVS 0, antenna 0, hold slack positive at every
-corner). **Nothing has been pushed.** `main` and the three other worktrees are untouched.
+Branch `wa` in `~/Documents/Projects/ttsky-clutchfactor`, cut from `origin/main` at
+`b5939b8` (the green run: DRC 0, LVS 0, antenna 0, hold slack positive at every corner).
+`main` and the three other worktrees are untouched. The local branch `clutchfactor`
+points at the same commit and is the name used in the commit messages below; `wa` is the
+name to push.
 
 ## One screen
 
@@ -249,24 +251,31 @@ restructuring candidate is in the deferred list below with what it would need.
 ## Recommended push order (for a human to run)
 
 Nothing here has been pushed. Every workflow is `on: push` without a branch filter, so
-the first push of the branch rebuilds the GDS and redeploys the viewer for that branch.
+the first push of `wa` runs the RTL tests, hardens the GDS, runs precheck and the
+gate-level test, and redeploys the Pages viewer for that branch. That push is the
+hardening run.
+
+Optional, before pushing (about five minutes, reproduces the whole gate locally):
 
 ```bash
 cd ~/Documents/Projects/ttsky-clutchfactor
 git log --oneline origin/main..HEAD          # 16 commits, read them all
 git diff origin/main --stat
-cd equiv && ./get_base.sh && ./run_diff.sh && ./formal.sh; cd ..   # ~5 min, reproduces the gate
+cd equiv && ./get_base.sh && ./run_diff.sh && ./formal.sh; cd ..
 ```
 
-1. Push the branch, not `main`: `git push origin clutchfactor`. Wait for the gds, test
-   and docs workflows. Confirm: test 8/8, precheck green, gl_test green, DRC/LVS/antenna
-   0, hold slack still positive, and read the P2 numbers (setup slack, buffer count) from
-   the gds artifact into the P2 section above.
-2. If anything is off, the commits revert independently from P2 onward:
+1. Push the branch, not `main`: `git push -u origin wa`. Because P5 added
+   `needs: test` to the gds job, nothing is hardened unless the RTL tests pass first.
+2. Confirm on the run: test 8/8, precheck green, gl_test green, DRC/LVS/antenna 0, hold
+   slack still positive, and read the P2 numbers (setup slack, TNS, violating paths,
+   timing-repair buffer count, cell count, area) out of the gds artifact into the P2
+   section above. Those five numbers are the only claim in this document that local
+   tooling could not measure.
+3. If anything is off, the commits revert independently from P2 onward:
    `git revert 1ea14dc` (P3b), `git revert a63bf43` (P3a), `git revert a6f7cc2` (P2).
    P4's two P3 tests must go with their commits (`git revert 2df100a` or edit them out).
-3. When green: `git push origin clutchfactor:main` (fast-forward; `main` is the branch's
-   base), or open a PR from `clutchfactor` if a review trail is wanted.
-4. Only `main`'s GDS is what the shuttle takes; do not tag or submit from the branch.
+4. When green: `git push origin wa:main` (fast-forward; `main` is the branch's base), or
+   open a PR from `wa` if a review trail is wanted.
+5. Only `main`'s GDS is what the shuttle takes; do not tag or submit from the branch.
 
 Deadline: Friday 2026-09-04.
