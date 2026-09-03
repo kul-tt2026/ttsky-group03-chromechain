@@ -90,9 +90,9 @@ beats per bitplane, 4 planes, MSB plane first, one beat per cycle only while `LD
 to 9, and `BUSY` falls.
 
 The pixel scanner has no abort, so after an early exit it keeps running the plane it is
-on for up to 52 cycles after `BUSY` falls. `SCAN_BUSY` (`DFT_SEL = 2`, `uo_out[3]`)
-reports it: poll it low, or wait 52 cycles, before the next `START`. Starting earlier
-scans the next image's first plane before it is loaded and latches the scanner alarm.
+on for up to 52 cycles after `BUSY` falls. Wait that long before the next `START`, or
+the next image's first plane is scanned before it is loaded and the scanner alarm
+latches.
 
 **5. See where it exited.** With `DFT_SEL = 2`, `uo_out[2:0]` carries `exit_k` — the
 checkpoint the decision was taken at (2 or 3 with the default arming), or 0 when the
@@ -107,7 +107,7 @@ difference is the entire point of the design.
 |---|---|
 | 0 | `{ERR, BUSY, LD_READY, DONE, ANSWER[3:0]}` — the operating view |
 | 1 | the config word at the loader's address: the word about to be written mid-load, undefined after a complete load |
-| 2 | `{blob_loaded, ld_done, ld_idx[1:0], SCAN_BUSY, exit_k[2:0]}` |
+| 2 | `{blob_loaded, ld_done, ld_idx[1:0], 0, exit_k[2:0]}` |
 | 3 | the five sticky alarms, individually |
 
 The cocotb tests in `test/` cover reset behaviour, the interlock that ignores `START`

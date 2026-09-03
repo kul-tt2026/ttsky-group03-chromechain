@@ -33,10 +33,6 @@ module cc_top #(
                                                 // until blob_loaded and while an image runs
     output wire                   busy,
     output wire                   done,         // 1-cycle pulse: `answer` is valid
-    output wire                   scan_busy,    // pixel scanner still running. A started
-                                                // plane runs to its end (no abort), up
-                                                // to 52 cycles after busy falls; a host
-                                                // must see this low before the next start
 
     // ---- pixel fill port: `LD_W = 8 b per beat into bitplane_buffer's fill half
     input  wire                   ld_en,
@@ -93,7 +89,7 @@ module cc_top #(
     wire [`N_CAP_W-1:0]    n_cap;
 
     wire                   img_start, swap, scan_start;
-    wire                   plane_start, plane_end, plane_valid, fill_full;
+    wire                   plane_start, plane_end, scan_busy, plane_valid, fill_full;
     wire [`LEN_W-1:0]      plane_len;
     wire [1:0]             plane_idx;
 

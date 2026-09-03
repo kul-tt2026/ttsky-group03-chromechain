@@ -2,8 +2,7 @@
 // on uo_out, uio tied off as inputs. No clocked logic of its own; it maps pins and
 // inverts rst_n into the design's active-high synchronous rst.
 //   HOST CONTRACT: the datapath keeps scanning for up to 52 cycles after `busy` falls.
-//   DFT view 2 bit 3 (SCAN_BUSY) reports it. A host polls that bit low, or waits 52
-//   cycles after DONE, before asserting start again.
+//   No pin reports it. A host MUST wait that long after DONE before asserting start.
 `default_nettype none
 `include "ckpt_defs.vh"
 
@@ -27,7 +26,7 @@ module tt_um_kul_chromechain (
     wire [1:0] dft_sel    = uio_in[6:5];
 
     // ---- chip
-    wire        busy, done, scan_busy, ld_ready, ld_done, blob_loaded, ans_valid;
+    wire        busy, done, ld_ready, ld_done, blob_loaded, ans_valid;
     wire [1:0]  ld_idx;
     wire [7:0]  cfg_rd_data;
     wire [3:0]  answer;
@@ -36,7 +35,7 @@ module tt_um_kul_chromechain (
 
     cc_top u_cc (
         .clk(clk), .rst(~rst_n),
-        .start(start), .busy(busy), .done(done), .scan_busy(scan_busy),
+        .start(start), .busy(busy), .done(done),
         .ld_en(ld_en), .ld_data(ui_in), .ld_vstrobe(ld_vstrobe),
         .ld_ready(ld_ready), .ld_done(ld_done), .ld_idx(ld_idx),
         .cfg_mode(cfg_mode), .cfg_stb(cfg_stb), .cfg_din(ui_in),
@@ -55,7 +54,7 @@ module tt_um_kul_chromechain (
         case (dft_sel)
             2'd0:    uo_r = {err_any, busy, ld_ready, done, answer};
             2'd1:    uo_r = cfg_rd_data;
-            2'd2:    uo_r = {blob_loaded, ld_done, ld_idx, scan_busy, exit_k};
+            2'd2:    uo_r = {blob_loaded, ld_done, ld_idx, 1'b0, exit_k};
             default: uo_r = {3'b000, cap_err, blob_err, frame_err, scan_err, sched_err};
         endcase
     end
