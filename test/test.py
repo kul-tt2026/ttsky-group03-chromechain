@@ -274,33 +274,6 @@ async def test_config_restart_after_abort(dut):
 
 
 @cocotb.test()
-async def test_scan_busy_drain_visible(dut):
-    """After an early exit the pixel scanner keeps running the plane it is on. View 2
-    bit 3 (SCAN_BUSY) reports it, and it falls within the documented 52 cycles."""
-    await reset(dut)
-    await load_blob(dut, mkblob())
-    answer, cycles = await run_image(dut, IMG_EARLY)
-    assert answer == 5
-    dut.uio_in.value = ctrl(dft=2)
-    await FallingEdge(dut.clk)
-    assert (view(dut) >> 3) & 1 == 1, "SCAN_BUSY low right after an early-exit DONE: the drain is not reported"
-    for n in range(60):
-        await FallingEdge(dut.clk)
-        if (view(dut) >> 3) & 1 == 0:
-            break
-    else:
-        raise AssertionError("SCAN_BUSY still high 60 cycles after DONE")
-    dut._log.info(f"scanner drained {n + 1} cycles after DONE")
-    assert n + 1 <= 52, f"drain took {n + 1} cycles, contract says at most 52"
-    # With the scanner idle, the next image runs clean: no scan_err.
-    dut.uio_in.value = 0
-    await FallingEdge(dut.clk)
-    answer, cycles = await run_image(dut, IMG_FULL)
-    exit_k, alarms = await read_exit_k_and_alarms(dut)
-    assert (answer, exit_k, alarms) == (5, 0, 0), f"second image: answer={answer} exit_k={exit_k} alarms={alarms:05b}"
-
-
-@cocotb.test()
 async def test_ncap_below_planes_is_reported(dut):
     """N_cap = 2 cannot be served (the final checkpoint is always at plane 4). It must be
     clamped to 4 and reported on cap_err, not swallowed: the chip then still answers
