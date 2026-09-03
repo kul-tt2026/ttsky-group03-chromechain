@@ -16,7 +16,42 @@ that deliberately change behaviour. These scripts are that gate.
 | `synth.sh <src> <log>` | 6c: synthesis parity | flattened yosys synth to sky130_fd_sc_hd, cell count and liberty area; `ABC_D=<ps>` adds an abc delay target |
 | `run_lint.sh <src>`, `lint_summary.sh <log>` | 6d: lint parity | `verilator --lint-only -Wall`; the summariser strips paths and line numbers so two logs diff cleanly |
 
+| `model/run_model_check.py [N] [src]` | the arithmetic against a SECOND implementation | generates N images, predicts each with `model/cc_model.py`, runs the same images through the TT pins with `model/tb_model.v`, compares answer and exit_k |
+
 The existing cocotb suite (6e) is `cd test && make` with cocotb 2.0.1 on Python 3.12.
+
+## `model/` -- the only check here that is not self-referential
+
+Everything else in `equiv/` proves the candidate matches `origin/main`. None of it can
+tell you `origin/main` is right. `model/cc_model.py` is an independent implementation of
+the datapath, written from the ROM contents and the RTL's stated conventions rather than
+from its structure: Horner accumulation, the 10-bit truncated requant, the L2 MAC, the
+tournament tree and the checkpoint schedule.
+
+```bash
+cd equiv/model && ./run_model_check.py 1000            # against ../../src
+cd equiv/model && ./run_model_check.py 1000 ../base_src
+```
+
+Result on this branch and on `origin/main`: 1000 of 1000 images agree on both the answer
+and the exit checkpoint. Injected-fault results, to show the check is not vacuous:
+
+| injected fault | mismatching images, of 200 |
+|---|---|
+| `max2_node` `>=` to `>`, the tie-break | 1 |
+| `l2_mac_x4` W2 pair order swapped | 144 |
+| `requant_unit` `t >>> k` to `>>` | 189 |
+| `l1_horner_acc`/`_cnt` doubling removed | 129 |
+| `ckpt_block` `bias_ext >>> bias_sh` to `>>` | 0, see below |
+
+The last one is not a gap in the model. That mutation is unobservable at the pins by any
+means: the difference is a multiple of 1024 and `requant_unit` truncates to 10 bits, so
+the differential harness also reports 0 differing cycles over 2,085,356 cycles. The shift
+stays arithmetic because it is correct, not because a test forces it.
+
+What this does NOT establish: that the trained network classifies digits well. It checks
+that the silicon computes what the weights say it should. The 10,000-image reference gate
+in the private repository remains the only check of accuracy.
 
 ```bash
 cd equiv
